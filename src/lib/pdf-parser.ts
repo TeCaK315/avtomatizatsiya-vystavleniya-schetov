@@ -1,100 +1,252 @@
-import { PDFToImagesFn } from '@/types';
-import * as pdfjsLib from 'pdfjs-dist';
-
-// Configure PDF.js worker
-if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-}
+import type { ExtractTextFromPDF, ParseInvoiceData, ExtractedData } from '@/types';
+import pdf from 'pdf-parse';
 
 /**
- * Converts PDF buffer to array of image buffers (PNG format)
- * Each page of the PDF is rendered as a separate image
- * @param pdfBuffer - PDF file as Buffer
- * @returns Array of image buffers (one per page)
+ * Extract text content from a PDF file
+ * @param file - PDF file to extract text from
+ * @returns Extracted text content
  */
-export const pdfToImages: PDFToImagesFn = async (pdfBuffer: Buffer): Promise<Buffer[]> => {
+export const extractTextFromPDF: ExtractTextFromPDF = async (file: File): Promise<string> => {
   try {
-    // Load PDF document
-    const loadingTask = pdfjsLib.getDocument({
-      data: new Uint8Array(pdfBuffer),
-    });
+    // Convert File to Buffer
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Parse PDF and extract text
+    const data = await pdf(buffer);
     
-    const pdf = await loadingTask.promise;
-    const numPages = pdf.numPages;
-    const imageBuffers: Buffer[] = [];
+    return data.text || '';
+  } catch (error) {
+    console.error('Error extracting text from PDF:', error);
+    throw new Error('Failed to extract text from PDF file');
+  }
+};
 
-    // Process each page
-    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-      const page = await pdf.getPage(pageNum);
-      
-      // Set scale for better OCR quality (2x resolution)
-      const scale = 2.0;
-      const viewport = page.getViewport({ scale });
+/**
+ * Parse invoice data from extracted text using pattern matching
+ * @param text - Extracted text from PDF
+ * @returns Parsed invoice data
+ */
+export const parseInvoiceData: ParseInvoiceData = (text: string): Partial<ExtractedData> => {
+  if (!text || text.trim().length === 0) {
+    return {
+      items: [],
+      rawText: text,
+      confidence: 0,
+    };
+  }
 
-      // Create canvas
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      
-      if (!context) {
-        throw new Error('Failed to get canvas 2D context');
-      }
+  const result: Partial<ExtractedData> = {
+    items: [],
+    rawText: text,
+    confidence: 0.5, // Base confidence for text-based parsing
+  };
 
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
+  // Normalize text for better pattern matching
+  const normalizedText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalizedText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
 
-      // Render PDF page to canvas
-      const renderContext = {
-        canvasContext: context,
-        viewport: viewport,
-      };
+  // Extract invoice number
+  const invoiceNumberPatterns = [
+    /invoice\s*#?\s*:?\s*([A-Z0-9\-]+)/i,
+    /invoice\s+number\s*:?\s*([A-Z0-9\-]+)/i,
+    /inv\s*#?\s*:?\s*([A-Z0-9\-]+)/i,
+    /#\s*([A-Z0-9\-]+)/,
+  ];
 
-      await page.render(renderContext).promise;
-
-      // Convert canvas to buffer
-      const dataUrl = canvas.toDataURL('image/png');
-      const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
-      const buffer = Buffer.from(base64Data, 'base64');
-      
-      imageBuffers.push(buffer);
+  for (const pattern of invoiceNumberPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      result.invoiceNumber = match[1].trim();
+      break;
     }
-
-    return imageBuffers;
-  } catch (error) {
-    console.error('Error converting PDF to images:', error);
-    throw new Error(`Failed to convert PDF to images: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+
+  // Extract dates (ISO format or common formats)
+  const datePatterns = [
+    /date\s*:?\s*(\d{4}-\d{2}-\d{2})/i,
+    /date\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+    /issue\s+date\s*:?\s*(\d{4}-\d{2}-\d{2})/i,
+    /issue\s+date\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+  ];
+
+  for (const pattern of datePatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      result.issueDate = normalizeDate(match[1]);
+      break;
+    }
+  }
+
+  // Extract due date
+  const dueDatePatterns = [
+    /due\s+date\s*:?\s*(\d{4}-\d{2}-\d{2})/i,
+    /due\s+date\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+    /payment\s+due\s*:?\s*(\d{4}-\d{2}-\d{2})/i,
+    /payment\s+due\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+  ];
+
+  for (const pattern of dueDatePatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      result.dueDate = normalizeDate(match[1]);
+      break;
+    }
+  }
+
+  // Extract client name (usually after "Bill To" or "Client")
+  const clientPatterns = [
+    /bill\s+to\s*:?\s*\n\s*([^\n]+)/i,
+    /client\s*:?\s*\n\s*([^\n]+)/i,
+    /customer\s*:?\s*\n\s*([^\n]+)/i,
+    /bill\s+to\s*:?\s*([^\n]+)/i,
+  ];
+
+  for (const pattern of clientPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      result.clientName = match[1].trim();
+      break;
+    }
+  }
+
+  // Extract email
+  const emailPattern = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/;
+  const emailMatch = text.match(emailPattern);
+  if (emailMatch && emailMatch[1]) {
+    result.clientEmail = emailMatch[1].trim();
+  }
+
+  // Extract address (lines after client name, before items)
+  if (result.clientName) {
+    const clientIndex = lines.findIndex(line => 
+      line.toLowerCase().includes('bill to') || 
+      line.toLowerCase().includes('client')
+    );
+    
+    if (clientIndex !== -1 && clientIndex + 2 < lines.length) {
+      const addressLines: string[] = [];
+      for (let i = clientIndex + 2; i < Math.min(clientIndex + 5, lines.length); i++) {
+        const line = lines[i];
+        // Stop if we hit item headers or amounts
+        if (line.match(/description|quantity|price|amount|total/i) || line.match(/^\$?\d+\.?\d*$/)) {
+          break;
+        }
+        if (line.length > 0 && !line.match(emailPattern)) {
+          addressLines.push(line);
+        }
+      }
+      if (addressLines.length > 0) {
+        result.clientAddress = addressLines.join(', ');
+      }
+    }
+  }
+
+  // Extract line items
+  const items: Array<{ description: string; quantity: number; unitPrice: number }> = [];
+  
+  // Look for table-like structures with description, quantity, price
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // Pattern: description followed by numbers (quantity and price)
+    const itemPattern = /^(.+?)\s+(\d+(?:\.\d+)?)\s+\$?(\d+(?:\.\d{2})?)(?:\s+\$?(\d+(?:\.\d{2})?))?/;
+    const match = line.match(itemPattern);
+    
+    if (match) {
+      const description = match[1].trim();
+      const quantity = parseFloat(match[2]);
+      const unitPrice = parseFloat(match[3]);
+      
+      // Validate that this looks like a real item (not a header or total)
+      if (
+        description.length > 2 &&
+        !description.toLowerCase().includes('total') &&
+        !description.toLowerCase().includes('subtotal') &&
+        !description.toLowerCase().includes('tax') &&
+        quantity > 0 &&
+        unitPrice > 0
+      ) {
+        items.push({
+          description,
+          quantity,
+          unitPrice,
+        });
+      }
+    }
+  }
+
+  result.items = items;
+
+  // Extract totals
+  const subtotalPattern = /subtotal\s*:?\s*\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/i;
+  const subtotalMatch = text.match(subtotalPattern);
+  if (subtotalMatch && subtotalMatch[1]) {
+    result.subtotal = parseFloat(subtotalMatch[1].replace(/,/g, ''));
+  }
+
+  const taxPattern = /tax\s*(?:\((\d+(?:\.\d+)?)%\))?\s*:?\s*\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/i;
+  const taxMatch = text.match(taxPattern);
+  if (taxMatch) {
+    if (taxMatch[1]) {
+      result.taxRate = parseFloat(taxMatch[1]);
+    }
+  }
+
+  const totalPattern = /total\s*:?\s*\$?(\d+(?:,\d{3})*(?:\.\d{2})?)/i;
+  const totalMatch = text.match(totalPattern);
+  if (totalMatch && totalMatch[1]) {
+    result.total = parseFloat(totalMatch[1].replace(/,/g, ''));
+  }
+
+  // Adjust confidence based on what we found
+  let foundFields = 0;
+  if (result.invoiceNumber) foundFields++;
+  if (result.clientName) foundFields++;
+  if (result.clientEmail) foundFields++;
+  if (result.issueDate) foundFields++;
+  if (result.items && result.items.length > 0) foundFields += 2;
+  if (result.total) foundFields++;
+
+  result.confidence = Math.min(0.9, 0.3 + (foundFields * 0.1));
+
+  return result;
 };
 
 /**
- * Server-side PDF to images conversion using pdf-parse
- * Fallback for Node.js environment where canvas is not available
+ * Normalize date string to ISO format
+ * @param dateStr - Date string in various formats
+ * @returns ISO date string
  */
-export const pdfToImagesServer = async (pdfBuffer: Buffer): Promise<Buffer[]> => {
+function normalizeDate(dateStr: string): string {
   try {
-    // For server-side, we'll use a different approach
-    // This is a simplified version that extracts text directly
-    // In production, you'd use node-canvas or similar
-    const pdf = require('pdf-parse');
-    const data = await pdf(pdfBuffer);
+    // Try parsing as-is first (handles ISO format)
+    let date = new Date(dateStr);
     
-    // Create a simple text-based image representation
-    // This is a fallback - in production use proper image rendering
-    const textBuffer = Buffer.from(data.text, 'utf-8');
+    // If invalid, try parsing common formats
+    if (isNaN(date.getTime())) {
+      // Handle DD/MM/YYYY or MM/DD/YYYY
+      const parts = dateStr.split(/[\/\-]/);
+      if (parts.length === 3) {
+        // Assume MM/DD/YYYY for US format
+        const month = parseInt(parts[0], 10);
+        const day = parseInt(parts[1], 10);
+        const year = parseInt(parts[2], 10);
+        
+        // Handle 2-digit years
+        const fullYear = year < 100 ? (year > 50 ? 1900 + year : 2000 + year) : year;
+        
+        date = new Date(fullYear, month - 1, day);
+      }
+    }
     
-    return [textBuffer];
+    if (!isNaN(date.getTime())) {
+      return date.toISOString();
+    }
   } catch (error) {
-    console.error('Error in server-side PDF parsing:', error);
-    throw new Error(`Failed to parse PDF on server: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('Error normalizing date:', error);
   }
-};
-
-/**
- * Universal PDF to images function that works in both browser and Node.js
- */
-export const pdfToImagesUniversal = async (pdfBuffer: Buffer): Promise<Buffer[]> => {
-  if (typeof window !== 'undefined') {
-    return pdfToImages(pdfBuffer);
-  } else {
-    return pdfToImagesServer(pdfBuffer);
-  }
-};
+  
+  // Fallback to current date if parsing fails
+  return new Date().toISOString();
+}

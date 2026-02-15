@@ -1,165 +1,271 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import { Invoice, InvoiceListProps, InvoiceStatus } from '@/types';
-import { InvoiceCard } from './InvoiceCard';
-import { ArrowUpDown, Filter } from 'lucide-react';
+import React, { useState } from 'react';
+import { Eye, Send, Trash2, Edit, FileText, Calendar, DollarSign, Mail } from 'lucide-react';
+import type { InvoiceListProps, Invoice } from '@/types';
+import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
-type SortField = 'invoiceNumber' | 'issueDate' | 'dueDate' | 'total' | 'status';
-type SortDirection = 'asc' | 'desc';
+export function InvoiceList({
+  invoices,
+  onView,
+  onEdit,
+  onDelete,
+  onSend,
+  isLoading = false,
+}: InvoiceListProps) {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [sendingId, setSendingId] = useState<string | null>(null);
 
-export function InvoiceList({ invoices, onInvoiceClick, onDeleteInvoice, onSendInvoice }: InvoiceListProps) {
-  const [sortField, setSortField] = useState<SortField>('issueDate');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const [statusFilter, setStatusFilter] = useState<InvoiceStatus | 'all'>('all');
-
-  const filteredAndSortedInvoices = useMemo(() => {
-    let filtered = [...invoices];
-
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(inv => inv.status === statusFilter);
+  const handleDelete = async (invoiceId: string) => {
+    if (!confirm('Are you sure you want to delete this invoice? This action cannot be undone.')) {
+      return;
     }
 
-    filtered.sort((a, b) => {
-      let aValue: string | number;
-      let bValue: string | number;
+    setDeletingId(invoiceId);
+    try {
+      await onDelete(invoiceId);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
-      switch (sortField) {
-        case 'invoiceNumber':
-          aValue = a.invoiceNumber;
-          bValue = b.invoiceNumber;
-          break;
-        case 'issueDate':
-          aValue = new Date(a.issueDate).getTime();
-          bValue = new Date(b.issueDate).getTime();
-          break;
-        case 'dueDate':
-          aValue = new Date(a.dueDate).getTime();
-          bValue = new Date(b.dueDate).getTime();
-          break;
-        case 'total':
-          aValue = a.total;
-          bValue = b.total;
-          break;
-        case 'status':
-          aValue = a.status;
-          bValue = b.status;
-          break;
-        default:
-          aValue = a.issueDate;
-          bValue = b.issueDate;
-      }
+  const handleSend = async (invoiceId: string) => {
+    setSendingId(invoiceId);
+    try {
+      await onSend(invoiceId);
+    } finally {
+      setSendingId(null);
+    }
+  };
 
-      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
-      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
-      return 0;
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
     });
-
-    return filtered;
-  }, [invoices, sortField, sortDirection, statusFilter]);
-
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDirection('asc');
-    }
   };
 
-  const getSortIcon = (field: SortField) => {
-    if (sortField !== field) {
-      return <ArrowUpDown className="w-4 h-4 text-gray-500" />;
-    }
+  const formatCurrency = (amount: number): string => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(amount);
+  };
+
+  if (isLoading) {
     return (
-      <ArrowUpDown 
-        className={`w-4 h-4 ${sortDirection === 'asc' ? 'text-blue-500' : 'text-blue-500 rotate-180'}`} 
-      />
+      <div className="flex items-center justify-center py-12">
+        <LoadingSpinner size="lg" />
+      </div>
     );
-  };
-
-  const statusOptions: Array<{ value: InvoiceStatus | 'all'; label: string }> = [
-    { value: 'all', label: 'All Invoices' },
-    { value: InvoiceStatus.DRAFT, label: 'Draft' },
-    { value: InvoiceStatus.SENT, label: 'Sent' },
-    { value: InvoiceStatus.PAID, label: 'Paid' },
-    { value: InvoiceStatus.OVERDUE, label: 'Overdue' },
-    { value: InvoiceStatus.CANCELLED, label: 'Cancelled' },
-  ];
+  }
 
   if (invoices.length === 0) {
     return (
-      <div className="bg-gray-900 rounded-lg p-12 text-center">
-        <div className="text-gray-400 text-lg mb-2">No invoices yet</div>
-        <div className="text-gray-500 text-sm">Create your first invoice or upload a PDF to get started</div>
+      <div className="text-center py-12">
+        <FileText className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+        <h3 className="text-xl font-semibold text-white mb-2">No invoices yet</h3>
+        <p className="text-gray-400">Create your first invoice to get started</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="bg-gray-900 rounded-lg p-4 flex flex-wrap gap-4 items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Filter className="w-5 h-5 text-gray-400" />
-          <span className="text-gray-300 text-sm font-medium">Filter by status:</span>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as InvoiceStatus | 'all')}
-            className="bg-gray-800 text-white border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {statusOptions.map(option => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
+      {/* Desktop Table View */}
+      <div className="hidden lg:block overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-gray-800">
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-400">Invoice #</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-400">Client</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-400">Issue Date</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-400">Due Date</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-400">Amount</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-400">Status</th>
+              <th className="text-right py-3 px-4 text-sm font-semibold text-gray-400">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.map((invoice) => (
+              <tr
+                key={invoice.id}
+                className="border-b border-gray-800 hover:bg-gray-800/50 transition-colors"
+              >
+                <td className="py-4 px-4">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-gray-500" />
+                    <span className="font-medium text-white">{invoice.invoiceNumber}</span>
+                  </div>
+                </td>
+                <td className="py-4 px-4">
+                  <div>
+                    <div className="font-medium text-white">{invoice.clientName}</div>
+                    <div className="text-sm text-gray-400 flex items-center gap-1">
+                      <Mail className="w-3 h-3" />
+                      {invoice.clientEmail}
+                    </div>
+                  </div>
+                </td>
+                <td className="py-4 px-4">
+                  <div className="flex items-center gap-2 text-gray-300">
+                    <Calendar className="w-4 h-4 text-gray-500" />
+                    {formatDate(invoice.issueDate)}
+                  </div>
+                </td>
+                <td className="py-4 px-4">
+                  <div className="flex items-center gap-2 text-gray-300">
+                    <Calendar className="w-4 h-4 text-gray-500" />
+                    {formatDate(invoice.dueDate)}
+                  </div>
+                </td>
+                <td className="py-4 px-4">
+                  <div className="flex items-center gap-1 font-semibold text-white">
+                    <DollarSign className="w-4 h-4" />
+                    {formatCurrency(invoice.total)}
+                  </div>
+                </td>
+                <td className="py-4 px-4">
+                  <Badge status={invoice.status} />
+                </td>
+                <td className="py-4 px-4">
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onView(invoice)}
+                      title="View invoice"
+                      leftIcon={<Eye className="w-4 h-4" />}
+                    >
+                      View
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onEdit(invoice)}
+                      title="Edit invoice"
+                      disabled={invoice.status === 'paid' || invoice.status === 'cancelled'}
+                      leftIcon={<Edit className="w-4 h-4" />}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleSend(invoice.id)}
+                      isLoading={sendingId === invoice.id}
+                      disabled={invoice.status === 'paid' || invoice.status === 'cancelled' || sendingId === invoice.id}
+                      title="Send invoice via email"
+                      leftIcon={<Send className="w-4 h-4" />}
+                    >
+                      Send
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => handleDelete(invoice.id)}
+                      isLoading={deletingId === invoice.id}
+                      disabled={deletingId === invoice.id}
+                      title="Delete invoice"
+                      leftIcon={<Trash2 className="w-4 h-4" />}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </td>
+              </tr>
             ))}
-          </select>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-gray-400 text-sm">Sort by:</span>
-          <button
-            onClick={() => handleSort('issueDate')}
-            className="flex items-center gap-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 transition-colors"
-          >
-            Date {getSortIcon('issueDate')}
-          </button>
-          <button
-            onClick={() => handleSort('total')}
-            className="flex items-center gap-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 transition-colors"
-          >
-            Amount {getSortIcon('total')}
-          </button>
-          <button
-            onClick={() => handleSort('status')}
-            className="flex items-center gap-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 transition-colors"
-          >
-            Status {getSortIcon('status')}
-          </button>
-        </div>
+          </tbody>
+        </table>
       </div>
 
-      <div className="text-sm text-gray-400 px-2">
-        Showing {filteredAndSortedInvoices.length} of {invoices.length} invoices
+      {/* Mobile Card View */}
+      <div className="lg:hidden space-y-4">
+        {invoices.map((invoice) => (
+          <div
+            key={invoice.id}
+            className="bg-gray-800 rounded-lg p-4 space-y-4"
+          >
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <FileText className="w-4 h-4 text-gray-500" />
+                  <span className="font-semibold text-white">{invoice.invoiceNumber}</span>
+                </div>
+                <div className="text-sm text-gray-400">{invoice.clientName}</div>
+              </div>
+              <Badge status={invoice.status} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <div className="text-gray-400 mb-1">Issue Date</div>
+                <div className="text-white">{formatDate(invoice.issueDate)}</div>
+              </div>
+              <div>
+                <div className="text-gray-400 mb-1">Due Date</div>
+                <div className="text-white">{formatDate(invoice.dueDate)}</div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-4 border-t border-gray-700">
+              <div className="text-gray-400">Total Amount</div>
+              <div className="text-xl font-bold text-white">{formatCurrency(invoice.total)}</div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onView(invoice)}
+                className="flex-1"
+                leftIcon={<Eye className="w-4 h-4" />}
+              >
+                View
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onEdit(invoice)}
+                disabled={invoice.status === 'paid' || invoice.status === 'cancelled'}
+                className="flex-1"
+                leftIcon={<Edit className="w-4 h-4" />}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleSend(invoice.id)}
+                isLoading={sendingId === invoice.id}
+                disabled={invoice.status === 'paid' || invoice.status === 'cancelled' || sendingId === invoice.id}
+                className="flex-1"
+                leftIcon={<Send className="w-4 h-4" />}
+              >
+                Send
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => handleDelete(invoice.id)}
+                isLoading={deletingId === invoice.id}
+                disabled={deletingId === invoice.id}
+                leftIcon={<Trash2 className="w-4 h-4" />}
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        ))}
       </div>
 
-      {filteredAndSortedInvoices.length === 0 ? (
-        <div className="bg-gray-900 rounded-lg p-8 text-center">
-          <div className="text-gray-400">No invoices match the selected filter</div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filteredAndSortedInvoices.map(invoice => (
-            <InvoiceCard
-              key={invoice.id}
-              invoice={invoice}
-              onClick={() => onInvoiceClick(invoice.id)}
-              onDelete={() => onDeleteInvoice(invoice.id)}
-              onSend={() => onSendInvoice(invoice.id)}
-            />
-          ))}
-        </div>
-      )}
+      <div className="text-center text-sm text-gray-400 pt-4">
+        Showing {invoices.length} {invoices.length === 1 ? 'invoice' : 'invoices'}
+      </div>
     </div>
   );
 }
-export default InvoiceList;

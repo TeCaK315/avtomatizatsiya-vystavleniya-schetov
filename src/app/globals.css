@@ -24,9 +24,6 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
     --radius: 0.5rem;
-    --success: 142.1 76.2% 36.3%;
-    --warning: 38 92% 50%;
-    --info: 199 89% 48%;
   }
 
   .dark {
@@ -49,9 +46,6 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 224.3 76.3% 48%;
-    --success: 142.1 70.6% 45.3%;
-    --warning: 38 92% 50%;
-    --info: 199 89% 48%;
   }
 }
 
@@ -65,325 +59,233 @@
   }
 }
 
-@layer components {
-  /* Invoice Status Badges */
-  .status-badge {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-  }
-
-  .status-draft {
-    @apply bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300;
-  }
-
-  .status-sent {
-    @apply bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300;
-  }
-
-  .status-paid {
-    @apply bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300;
-  }
-
-  .status-overdue {
-    @apply bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300;
-  }
-
-  .status-cancelled {
-    @apply bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400;
-  }
-
-  /* Card Components */
-  .card {
-    @apply rounded-lg border bg-card text-card-foreground shadow-sm;
-  }
-
-  .card-header {
-    @apply flex flex-col space-y-1.5 p-6;
-  }
-
-  .card-title {
-    @apply text-2xl font-semibold leading-none tracking-tight;
-  }
-
-  .card-description {
-    @apply text-sm text-muted-foreground;
-  }
-
-  .card-content {
-    @apply p-6 pt-0;
-  }
-
-  .card-footer {
-    @apply flex items-center p-6 pt-0;
-  }
-
-  /* Button Components */
-  .btn {
-    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none ring-offset-background;
-  }
-
-  .btn-primary {
-    @apply bg-primary text-primary-foreground hover:bg-primary/90;
-  }
-
-  .btn-secondary {
-    @apply bg-secondary text-secondary-foreground hover:bg-secondary/80;
-  }
-
-  .btn-destructive {
-    @apply bg-destructive text-destructive-foreground hover:bg-destructive/90;
-  }
-
-  .btn-outline {
-    @apply border border-input hover:bg-accent hover:text-accent-foreground;
-  }
-
-  .btn-ghost {
-    @apply hover:bg-accent hover:text-accent-foreground;
-  }
-
-  .btn-sm {
-    @apply h-9 px-3 rounded-md;
-  }
-
-  .btn-md {
-    @apply h-10 py-2 px-4;
-  }
-
-  .btn-lg {
-    @apply h-11 px-8 rounded-md;
-  }
-
-  /* Input Components */
-  .input {
-    @apply flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
-  }
-
-  .textarea {
-    @apply flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
-  }
-
-  .label {
-    @apply text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70;
-  }
-
-  /* Table Components */
-  .table {
-    @apply w-full caption-bottom text-sm;
-  }
-
-  .table-header {
-    @apply border-b;
-  }
-
-  .table-body {
-    @apply [&_tr:last-child]:border-0;
-  }
-
-  .table-row {
-    @apply border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted;
-  }
-
-  .table-head {
-    @apply h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0;
-  }
-
-  .table-cell {
-    @apply p-4 align-middle [&:has([role=checkbox])]:pr-0;
-  }
-
-  /* Upload Zone */
-  .upload-zone {
-    @apply border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary transition-colors cursor-pointer;
-  }
-
-  .upload-zone-active {
-    @apply border-primary bg-primary/5;
-  }
-
-  /* Stats Card */
-  .stat-card {
-    @apply card p-6;
-  }
-
-  .stat-value {
-    @apply text-3xl font-bold;
-  }
-
-  .stat-label {
-    @apply text-sm text-muted-foreground;
-  }
-
-  .stat-change {
-    @apply text-xs font-medium;
-  }
-
-  .stat-change-positive {
-    @apply text-green-600 dark:text-green-400;
-  }
-
-  .stat-change-negative {
-    @apply text-red-600 dark:text-red-400;
-  }
-
-  /* Invoice Card */
-  .invoice-card {
-    @apply card p-6 hover:shadow-md transition-shadow cursor-pointer;
-  }
-
-  .invoice-header {
-    @apply flex items-start justify-between mb-4;
-  }
-
-  .invoice-number {
-    @apply text-lg font-semibold;
-  }
-
-  .invoice-amount {
-    @apply text-2xl font-bold;
-  }
-
-  .invoice-details {
-    @apply space-y-2 text-sm text-muted-foreground;
-  }
-
-  .invoice-actions {
-    @apply flex items-center gap-2 mt-4 pt-4 border-t;
-  }
-
-  /* Filter Bar */
-  .filter-bar {
-    @apply flex flex-wrap items-center gap-4 p-4 bg-muted/50 rounded-lg;
-  }
-
-  .filter-group {
-    @apply flex items-center gap-2;
-  }
-
-  /* Loading States */
-  .skeleton {
-    @apply animate-pulse bg-muted rounded;
-  }
-
-  .spinner {
-    @apply animate-spin rounded-full border-2 border-current border-t-transparent;
-  }
-
-  /* Alert Components */
-  .alert {
-    @apply relative w-full rounded-lg border p-4;
-  }
-
-  .alert-success {
-    @apply border-green-200 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-100;
-  }
-
-  .alert-error {
-    @apply border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100;
-  }
-
-  .alert-warning {
-    @apply border-yellow-200 bg-yellow-50 text-yellow-900 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-100;
-  }
-
-  .alert-info {
-    @apply border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100;
-  }
-}
-
 @layer utilities {
-  /* Custom Scrollbar */
-  .scrollbar-thin {
-    scrollbar-width: thin;
-    scrollbar-color: hsl(var(--muted-foreground)) transparent;
-  }
-
-  .scrollbar-thin::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-
-  .scrollbar-thin::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: hsl(var(--muted-foreground));
-    border-radius: 4px;
-  }
-
-  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background-color: hsl(var(--foreground));
-  }
-
-  /* Text Utilities */
   .text-balance {
     text-wrap: balance;
   }
+}
 
-  /* Animation Utilities */
-  .animate-in {
-    animation: animate-in 0.2s ease-out;
-  }
+/* Custom scrollbar styles */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
 
-  @keyframes animate-in {
-    from {
-      opacity: 0;
-      transform: translateY(-10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
+::-webkit-scrollbar-track {
+  @apply bg-secondary;
+}
 
-  .animate-out {
-    animation: animate-out 0.2s ease-in;
-  }
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/30 rounded-md;
+}
 
-  @keyframes animate-out {
-    from {
-      opacity: 1;
-      transform: translateY(0);
-    }
-    to {
-      opacity: 0;
-      transform: translateY(-10px);
-    }
-  }
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/50;
+}
 
-  /* Focus Utilities */
-  .focus-ring {
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+/* Animation utilities */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
-/* Print Styles for Invoices */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(-25%);
+    animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+  }
+  50% {
+    transform: translateY(0);
+    animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-bounce {
+  animation: bounce 1s infinite;
+}
+
+/* Print styles for invoice preview */
 @media print {
   body {
     @apply bg-white text-black;
   }
-
+  
   .no-print {
     display: none !important;
   }
-
-  .invoice-card {
-    @apply shadow-none border-none;
-    page-break-inside: avoid;
-  }
-
-  .card {
-    @apply shadow-none;
+  
+  .print-full-width {
+    width: 100% !important;
+    max-width: none !important;
   }
 }
 
-/* Responsive Typography */
-@media (max-width: 640px) {
-  .invoice-amount {
-    @apply text-xl;
-  }
+/* Drag and drop styles */
+.drag-active {
+  @apply border-primary bg-primary/5;
+}
 
-  .stat-value {
-    @apply text-2xl;
-  }
+.drag-reject {
+  @apply border-destructive bg-destructive/5;
+}
+
+/* Form validation styles */
+.input-error {
+  @apply border-destructive focus:ring-destructive;
+}
+
+.error-message {
+  @apply text-destructive text-sm mt-1;
+}
+
+/* Table styles */
+.table-hover tbody tr {
+  @apply transition-colors hover:bg-muted/50 cursor-pointer;
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+  @apply fixed inset-0 bg-black/50 backdrop-blur-sm z-40;
+}
+
+/* Toast notification styles */
+.toast-success {
+  @apply bg-green-500 text-white;
+}
+
+.toast-error {
+  @apply bg-destructive text-destructive-foreground;
+}
+
+.toast-warning {
+  @apply bg-yellow-500 text-white;
+}
+
+.toast-info {
+  @apply bg-primary text-primary-foreground;
+}
+
+/* Loading skeleton */
+.skeleton {
+  @apply animate-pulse bg-muted rounded;
+}
+
+/* Badge variants */
+.badge-draft {
+  @apply bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100;
+}
+
+.badge-sent {
+  @apply bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100;
+}
+
+.badge-paid {
+  @apply bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100;
+}
+
+.badge-overdue {
+  @apply bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100;
+}
+
+.badge-cancelled {
+  @apply bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100;
+}
+
+/* Focus visible styles for accessibility */
+.focus-visible-ring {
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+}
+
+/* Transition utilities */
+.transition-base {
+  @apply transition-all duration-200 ease-in-out;
+}
+
+/* Card hover effect */
+.card-hover {
+  @apply transition-base hover:shadow-lg hover:-translate-y-1;
+}
+
+/* Button loading state */
+.btn-loading {
+  @apply relative text-transparent pointer-events-none;
+}
+
+.btn-loading::after {
+  content: '';
+  @apply absolute inset-0 flex items-center justify-center;
+  animation: spin 1s linear infinite;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  width: 1rem;
+  height: 1rem;
+  margin: auto;
+}
+
+/* Grid layout utilities */
+.grid-auto-fit {
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+.grid-auto-fill {
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+}
+
+/* Text truncate utilities */
+.truncate-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.truncate-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Status indicator dot */
+.status-dot {
+  @apply inline-block w-2 h-2 rounded-full mr-2;
+}
+
+.status-dot-draft {
+  @apply bg-gray-400;
+}
+
+.status-dot-sent {
+  @apply bg-blue-500;
+}
+
+.status-dot-paid {
+  @apply bg-green-500;
+}
+
+.status-dot-overdue {
+  @apply bg-red-500;
+}
+
+.status-dot-cancelled {
+  @apply bg-gray-400;
 }

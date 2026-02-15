@@ -5,9 +5,8 @@ import { Inter } from 'next/font/google';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Invoice Automation - Manage Your Invoices',
-  description: 'Automated invoice management system with OCR, PDF parsing, and email sending capabilities',
-  keywords: ['invoice', 'automation', 'billing', 'OCR', 'PDF'],
+  title: 'Invoice Automation System',
+  description: 'Automated invoice creation, PDF extraction, and email delivery',
 };
 
 export default function RootLayout({
@@ -19,10 +18,25 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <div className="min-h-screen bg-gray-50">
-          <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex justify-between items-center h-16">
-                <div className="flex items-center">
+          <header className="bg-white border-b border-gray-200">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                    <svg
+                      className="w-5 h-5 text-white"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                  </div>
                   <h1 className="text-xl font-bold text-gray-900">
                     Invoice Automation
                   </h1>
@@ -39,9 +53,9 @@ export default function RootLayout({
             {children}
           </main>
           <footer className="bg-white border-t border-gray-200 mt-auto">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
               <p className="text-center text-sm text-gray-500">
-                © {new Date().getFullYear()} Invoice Automation. All rights reserved.
+                © {new Date().getFullYear()} Invoice Automation System. All rights reserved.
               </p>
             </div>
           </footer>

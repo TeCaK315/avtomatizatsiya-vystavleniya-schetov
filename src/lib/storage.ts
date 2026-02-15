@@ -1,196 +1,213 @@
-import {
+import type {
   Invoice,
-  InvoiceStatus,
-  InvoiceFilters,
-  StorageService as IStorageService,
+  CreateInvoiceRequest,
+  UpdateInvoiceRequest,
+  StorageService,
 } from '@/types';
 
-const STORAGE_KEY = 'invoices_data';
-const COUNTER_KEY = 'invoice_counter';
+const STORAGE_KEY = 'invoices';
 
-class StorageServiceImpl implements IStorageService {
-  private isBrowser(): boolean {
-    return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+function getInvoicesFromStorage(): Invoice[] {
+  if (typeof window === 'undefined') {
+    return [];
   }
-
-  private getStorage(): Invoice[] {
-    if (!this.isBrowser()) {
+  
+  try {
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (!data) {
       return [];
     }
-    try {
-      const data = localStorage.getItem(STORAGE_KEY);
-      if (!data) {
-        return [];
-      }
-      return JSON.parse(data) as Invoice[];
-    } catch (error) {
-      console.error('Error reading from localStorage:', error);
-      return [];
-    }
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error('Error reading from localStorage:', error);
+    return [];
   }
+}
 
-  private setStorage(invoices: Invoice[]): void {
-    if (!this.isBrowser()) {
-      return;
-    }
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(invoices));
-    } catch (error) {
-      console.error('Error writing to localStorage:', error);
-    }
+function saveInvoicesToStorage(invoices: Invoice[]): void {
+  if (typeof window === 'undefined') {
+    return;
   }
-
-  private getCounter(): number {
-    if (!this.isBrowser()) {
-      return 1;
-    }
-    try {
-      const counter = localStorage.getItem(COUNTER_KEY);
-      return counter ? parseInt(counter, 10) : 1;
-    } catch (error) {
-      console.error('Error reading counter from localStorage:', error);
-      return 1;
-    }
+  
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(invoices));
+  } catch (error) {
+    console.error('Error writing to localStorage:', error);
   }
+}
 
-  private incrementCounter(): number {
-    if (!this.isBrowser()) {
-      return 1;
-    }
-    try {
-      const current = this.getCounter();
-      const next = current + 1;
-      localStorage.setItem(COUNTER_KEY, next.toString());
-      return current;
-    } catch (error) {
-      console.error('Error incrementing counter:', error);
-      return 1;
-    }
-  }
+function generateId(): string {
+  return `inv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
 
-  private generateId(): string {
-    return `inv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  }
+function generateInvoiceNumber(): string {
+  const invoices = getInvoicesFromStorage();
+  const year = new Date().getFullYear();
+  const existingNumbers = invoices
+    .map(inv => inv.invoiceNumber)
+    .filter(num => num.startsWith(`INV-${year}-`))
+    .map(num => {
+      const match = num.match(/INV-\d{4}-(\d+)/);
+      return match ? parseInt(match[1], 10) : 0;
+    });
+  
+  const nextNumber = existingNumbers.length > 0 
+    ? Math.max(...existingNumbers) + 1 
+    : 1;
+  
+  return `INV-${year}-${String(nextNumber).padStart(3, '0')}`;
+}
 
+function calculateItemTotal(quantity: number, unitPrice: number): number {
+  return Math.round(quantity * unitPrice * 100) / 100;
+}
+
+function calculateInvoiceTotals(
+  items: Array<{ quantity: number; unitPrice: number }>,
+  taxRate: number
+): { subtotal: number; taxAmount: number; total: number } {
+  const subtotal = items.reduce((sum, item) => {
+    return sum + calculateItemTotal(item.quantity, item.unitPrice);
+  }, 0);
+  
+  const taxAmount = Math.round(subtotal * (taxRate / 100) * 100) / 100;
+  const total = Math.round((subtotal + taxAmount) * 100) / 100;
+  
+  return { subtotal, taxAmount, total };
+}
+
+const storageService: StorageService = {
   getInvoices(): Invoice[] {
-    return this.getStorage();
-  }
+    return getInvoicesFromStorage();
+  },
 
   getInvoice(id: string): Invoice | null {
-    const invoices = this.getStorage();
-    const invoice = invoices.find((inv) => inv.id === id);
-    return invoice || null;
-  }
+    const invoices = getInvoicesFromStorage();
+    return invoices.find(inv => inv.id === id) || null;
+  },
 
-  createInvoice(invoice: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'>): Invoice {
-    const invoices = this.getStorage();
+  createInvoice(data: CreateInvoiceRequest): Invoice {
+    const invoices = getInvoicesFromStorage();
     const now = new Date().toISOString();
     
+    const itemsWithTotals = data.items.map((item, index) => ({
+      id: `item_${Date.now()}_${index}`,
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      total: calculateItemTotal(item.quantity, item.unitPrice),
+    }));
+    
+    const { subtotal, taxAmount, total } = calculateInvoiceTotals(
+      data.items,
+      data.taxRate
+    );
+    
     const newInvoice: Invoice = {
-      ...invoice,
-      id: this.generateId(),
+      id: generateId(),
+      invoiceNumber: data.invoiceNumber,
+      clientName: data.clientName,
+      clientEmail: data.clientEmail,
+      clientAddress: data.clientAddress,
+      issueDate: data.issueDate,
+      dueDate: data.dueDate,
+      items: itemsWithTotals,
+      subtotal,
+      taxRate: data.taxRate,
+      taxAmount,
+      total,
+      status: 'draft',
+      notes: data.notes,
       createdAt: now,
       updatedAt: now,
     };
-
+    
     invoices.push(newInvoice);
-    this.setStorage(invoices);
+    saveInvoicesToStorage(invoices);
     
     return newInvoice;
-  }
+  },
 
-  updateInvoice(id: string, updates: Partial<Invoice>): Invoice | null {
-    const invoices = this.getStorage();
-    const index = invoices.findIndex((inv) => inv.id === id);
+  updateInvoice(id: string, data: UpdateInvoiceRequest): Invoice | null {
+    const invoices = getInvoicesFromStorage();
+    const index = invoices.findIndex(inv => inv.id === id);
     
     if (index === -1) {
       return null;
     }
-
+    
+    const existingInvoice = invoices[index];
+    const now = new Date().toISOString();
+    
+    let updatedItems = existingInvoice.items;
+    let subtotal = existingInvoice.subtotal;
+    let taxAmount = existingInvoice.taxAmount;
+    let total = existingInvoice.total;
+    let taxRate = existingInvoice.taxRate;
+    
+    if (data.items || data.taxRate !== undefined) {
+      const itemsToCalculate = data.items || existingInvoice.items.map(item => ({
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      }));
+      
+      taxRate = data.taxRate !== undefined ? data.taxRate : existingInvoice.taxRate;
+      
+      updatedItems = itemsToCalculate.map((item, idx) => ({
+        id: data.items ? `item_${Date.now()}_${idx}` : existingInvoice.items[idx]?.id || `item_${Date.now()}_${idx}`,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        total: calculateItemTotal(item.quantity, item.unitPrice),
+      }));
+      
+      const calculations = calculateInvoiceTotals(itemsToCalculate, taxRate);
+      subtotal = calculations.subtotal;
+      taxAmount = calculations.taxAmount;
+      total = calculations.total;
+    }
+    
     const updatedInvoice: Invoice = {
-      ...invoices[index],
-      ...updates,
-      id: invoices[index].id,
-      createdAt: invoices[index].createdAt,
-      updatedAt: new Date().toISOString(),
+      ...existingInvoice,
+      invoiceNumber: data.invoiceNumber ?? existingInvoice.invoiceNumber,
+      clientName: data.clientName ?? existingInvoice.clientName,
+      clientEmail: data.clientEmail ?? existingInvoice.clientEmail,
+      clientAddress: data.clientAddress !== undefined ? data.clientAddress : existingInvoice.clientAddress,
+      issueDate: data.issueDate ?? existingInvoice.issueDate,
+      dueDate: data.dueDate ?? existingInvoice.dueDate,
+      items: updatedItems,
+      subtotal,
+      taxRate,
+      taxAmount,
+      total,
+      status: data.status ?? existingInvoice.status,
+      notes: data.notes !== undefined ? data.notes : existingInvoice.notes,
+      updatedAt: now,
     };
-
+    
     invoices[index] = updatedInvoice;
-    this.setStorage(invoices);
+    saveInvoicesToStorage(invoices);
     
     return updatedInvoice;
-  }
+  },
 
   deleteInvoice(id: string): boolean {
-    const invoices = this.getStorage();
-    const index = invoices.findIndex((inv) => inv.id === id);
+    const invoices = getInvoicesFromStorage();
+    const filteredInvoices = invoices.filter(inv => inv.id !== id);
     
-    if (index === -1) {
+    if (filteredInvoices.length === invoices.length) {
       return false;
     }
-
-    invoices.splice(index, 1);
-    this.setStorage(invoices);
     
+    saveInvoicesToStorage(filteredInvoices);
     return true;
-  }
+  },
 
-  searchInvoices(query: string): Invoice[] {
-    const invoices = this.getStorage();
-    const lowerQuery = query.toLowerCase().trim();
-    
-    if (!lowerQuery) {
-      return invoices;
-    }
+  generateInvoiceNumber(): string {
+    return generateInvoiceNumber();
+  },
+};
 
-    return invoices.filter((invoice) => {
-      return (
-        invoice.invoiceNumber.toLowerCase().includes(lowerQuery) ||
-        invoice.from.name.toLowerCase().includes(lowerQuery) ||
-        invoice.from.email.toLowerCase().includes(lowerQuery) ||
-        invoice.to.name.toLowerCase().includes(lowerQuery) ||
-        invoice.to.email.toLowerCase().includes(lowerQuery) ||
-        invoice.items.some((item) =>
-          item.description.toLowerCase().includes(lowerQuery)
-        ) ||
-        (invoice.notes && invoice.notes.toLowerCase().includes(lowerQuery))
-      );
-    });
-  }
-
-  filterInvoices(filters: InvoiceFilters): Invoice[] {
-    let invoices = this.getStorage();
-
-    if (filters.status && filters.status.length > 0) {
-      invoices = invoices.filter((inv) =>
-        filters.status!.includes(inv.status)
-      );
-    }
-
-    if (filters.dateFrom) {
-      const fromDate = new Date(filters.dateFrom);
-      invoices = invoices.filter(
-        (inv) => new Date(inv.issueDate) >= fromDate
-      );
-    }
-
-    if (filters.dateTo) {
-      const toDate = new Date(filters.dateTo);
-      invoices = invoices.filter(
-        (inv) => new Date(inv.issueDate) <= toDate
-      );
-    }
-
-    if (filters.minAmount !== undefined) {
-      invoices = invoices.filter((inv) => inv.total >= filters.minAmount!);
-    }
-
-    if (filters.maxAmount !== undefined) {
-      invoices = invoices.filter((inv) => inv.total <= filters.maxAmount!);
-    }
-
-    return invoices;
-  }
-}
-
-export const StorageService = new StorageServiceImpl();
+export { storageService };
