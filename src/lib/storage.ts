@@ -1,232 +1,195 @@
 import {
   Invoice,
-  IntegrationConfig,
-  IntegrationProvider,
-  StorageService as IStorageService
+  InvoiceStatus,
+  InvoiceFilters,
+  StorageService as IStorageService,
 } from '@/types';
 
-const INVOICES_KEY = 'invoices';
-const INTEGRATIONS_KEY = 'integrations';
+const STORAGE_KEY = 'invoices_data';
+const COUNTER_KEY = 'invoice_counter';
 
 class StorageServiceImpl implements IStorageService {
   private isBrowser(): boolean {
-    return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+    return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
   }
 
-  private getFromStorage<T>(key: string): T | null {
+  private getStorage(): Invoice[] {
     if (!this.isBrowser()) {
-      return null;
+      return [];
     }
-
     try {
-      const item = localStorage.getItem(key);
-      if (!item) {
-        return null;
+      const data = localStorage.getItem(STORAGE_KEY);
+      if (!data) {
+        return [];
       }
-      return JSON.parse(item) as T;
+      return JSON.parse(data) as Invoice[];
     } catch (error) {
-      console.error(`Error reading from localStorage (${key}):`, error);
-      return null;
+      console.error('Error reading from localStorage:', error);
+      return [];
     }
   }
 
-  private setToStorage<T>(key: string, value: T): void {
+  private setStorage(invoices: Invoice[]): void {
     if (!this.isBrowser()) {
       return;
     }
-
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(invoices));
     } catch (error) {
-      console.error(`Error writing to localStorage (${key}):`, error);
+      console.error('Error writing to localStorage:', error);
     }
   }
 
-  // Invoice methods
-  saveInvoice(invoice: Invoice): void {
-    const invoices = this.getAllInvoices();
-    const existingIndex = invoices.findIndex((inv) => inv.id === invoice.id);
-
-    if (existingIndex >= 0) {
-      invoices[existingIndex] = invoice;
-    } else {
-      invoices.push(invoice);
+  private getCounter(): number {
+    if (!this.isBrowser()) {
+      return 1;
     }
+    try {
+      const counter = localStorage.getItem(COUNTER_KEY);
+      return counter ? parseInt(counter, 10) : 1;
+    } catch (error) {
+      console.error('Error reading counter from localStorage:', error);
+      return 1;
+    }
+  }
 
-    this.setToStorage(INVOICES_KEY, invoices);
+  private incrementCounter(): number {
+    if (!this.isBrowser()) {
+      return 1;
+    }
+    try {
+      const current = this.getCounter();
+      const next = current + 1;
+      localStorage.setItem(COUNTER_KEY, next.toString());
+      return current;
+    } catch (error) {
+      console.error('Error incrementing counter:', error);
+      return 1;
+    }
+  }
+
+  private generateId(): string {
+    return `inv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  getInvoices(): Invoice[] {
+    return this.getStorage();
   }
 
   getInvoice(id: string): Invoice | null {
-    const invoices = this.getAllInvoices();
-    return invoices.find((inv) => inv.id === id) || null;
+    const invoices = this.getStorage();
+    const invoice = invoices.find((inv) => inv.id === id);
+    return invoice || null;
   }
 
-  getAllInvoices(): Invoice[] {
-    const invoices = this.getFromStorage<Invoice[]>(INVOICES_KEY);
-    return invoices || [];
-  }
-
-  updateInvoice(id: string, updates: Partial<Invoice>): void {
-    const invoices = this.getAllInvoices();
-    const index = invoices.findIndex((inv) => inv.id === id);
-
-    if (index >= 0) {
-      invoices[index] = {
-        ...invoices[index],
-        ...updates
-      };
-      this.setToStorage(INVOICES_KEY, invoices);
-    }
-  }
-
-  deleteInvoice(id: string): void {
-    const invoices = this.getAllInvoices();
-    const filtered = invoices.filter((inv) => inv.id !== id);
-    this.setToStorage(INVOICES_KEY, filtered);
-  }
-
-  // Integration methods
-  saveIntegration(integration: IntegrationConfig): void {
-    const integrations = this.getAllIntegrations();
-    const existingIndex = integrations.findIndex(
-      (int) => int.provider === integration.provider
-    );
-
-    if (existingIndex >= 0) {
-      integrations[existingIndex] = integration;
-    } else {
-      integrations.push(integration);
-    }
-
-    this.setToStorage(INTEGRATIONS_KEY, integrations);
-  }
-
-  getIntegration(provider: IntegrationProvider): IntegrationConfig | null {
-    const integrations = this.getAllIntegrations();
-    return integrations.find((int) => int.provider === provider) || null;
-  }
-
-  getAllIntegrations(): IntegrationConfig[] {
-    const integrations = this.getFromStorage<IntegrationConfig[]>(INTEGRATIONS_KEY);
-    return integrations || [];
-  }
-
-  updateIntegration(
-    provider: IntegrationProvider,
-    updates: Partial<IntegrationConfig>
-  ): void {
-    const integrations = this.getAllIntegrations();
-    const index = integrations.findIndex((int) => int.provider === provider);
-
-    if (index >= 0) {
-      integrations[index] = {
-        ...integrations[index],
-        ...updates
-      };
-      this.setToStorage(INTEGRATIONS_KEY, integrations);
-    }
-  }
-
-  deleteIntegration(provider: IntegrationProvider): void {
-    const integrations = this.getAllIntegrations();
-    const filtered = integrations.filter((int) => int.provider !== provider);
-    this.setToStorage(INTEGRATIONS_KEY, filtered);
-  }
-
-  // Utility methods for bulk operations
-  clearAllInvoices(): void {
-    if (this.isBrowser()) {
-      localStorage.removeItem(INVOICES_KEY);
-    }
-  }
-
-  clearAllIntegrations(): void {
-    if (this.isBrowser()) {
-      localStorage.removeItem(INTEGRATIONS_KEY);
-    }
-  }
-
-  clearAll(): void {
-    this.clearAllInvoices();
-    this.clearAllIntegrations();
-  }
-
-  exportData(): { invoices: Invoice[]; integrations: IntegrationConfig[] } {
-    return {
-      invoices: this.getAllInvoices(),
-      integrations: this.getAllIntegrations()
+  createInvoice(invoice: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'>): Invoice {
+    const invoices = this.getStorage();
+    const now = new Date().toISOString();
+    
+    const newInvoice: Invoice = {
+      ...invoice,
+      id: this.generateId(),
+      createdAt: now,
+      updatedAt: now,
     };
+
+    invoices.push(newInvoice);
+    this.setStorage(invoices);
+    
+    return newInvoice;
   }
 
-  importData(data: {
-    invoices?: Invoice[];
-    integrations?: IntegrationConfig[];
-  }): void {
-    if (data.invoices) {
-      this.setToStorage(INVOICES_KEY, data.invoices);
+  updateInvoice(id: string, updates: Partial<Invoice>): Invoice | null {
+    const invoices = this.getStorage();
+    const index = invoices.findIndex((inv) => inv.id === id);
+    
+    if (index === -1) {
+      return null;
     }
-    if (data.integrations) {
-      this.setToStorage(INTEGRATIONS_KEY, data.integrations);
-    }
+
+    const updatedInvoice: Invoice = {
+      ...invoices[index],
+      ...updates,
+      id: invoices[index].id,
+      createdAt: invoices[index].createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+
+    invoices[index] = updatedInvoice;
+    this.setStorage(invoices);
+    
+    return updatedInvoice;
   }
 
-  // Search and filter utilities
+  deleteInvoice(id: string): boolean {
+    const invoices = this.getStorage();
+    const index = invoices.findIndex((inv) => inv.id === id);
+    
+    if (index === -1) {
+      return false;
+    }
+
+    invoices.splice(index, 1);
+    this.setStorage(invoices);
+    
+    return true;
+  }
+
   searchInvoices(query: string): Invoice[] {
-    const invoices = this.getAllInvoices();
-    const lowerQuery = query.toLowerCase();
+    const invoices = this.getStorage();
+    const lowerQuery = query.toLowerCase().trim();
+    
+    if (!lowerQuery) {
+      return invoices;
+    }
 
     return invoices.filter((invoice) => {
-      const searchableFields = [
-        invoice.fileName,
-        invoice.extractedData?.invoiceNumber,
-        invoice.extractedData?.vendorName,
-        invoice.extractedData?.customerName,
-        invoice.status
-      ];
-
-      return searchableFields.some((field) =>
-        field?.toLowerCase().includes(lowerQuery)
+      return (
+        invoice.invoiceNumber.toLowerCase().includes(lowerQuery) ||
+        invoice.from.name.toLowerCase().includes(lowerQuery) ||
+        invoice.from.email.toLowerCase().includes(lowerQuery) ||
+        invoice.to.name.toLowerCase().includes(lowerQuery) ||
+        invoice.to.email.toLowerCase().includes(lowerQuery) ||
+        invoice.items.some((item) =>
+          item.description.toLowerCase().includes(lowerQuery)
+        ) ||
+        (invoice.notes && invoice.notes.toLowerCase().includes(lowerQuery))
       );
     });
   }
 
-  filterInvoicesByStatus(statuses: string[]): Invoice[] {
-    const invoices = this.getAllInvoices();
-    return invoices.filter((invoice) => statuses.includes(invoice.status));
-  }
+  filterInvoices(filters: InvoiceFilters): Invoice[] {
+    let invoices = this.getStorage();
 
-  filterInvoicesByDateRange(startDate: string, endDate: string): Invoice[] {
-    const invoices = this.getAllInvoices();
-    const start = new Date(startDate).getTime();
-    const end = new Date(endDate).getTime();
+    if (filters.status && filters.status.length > 0) {
+      invoices = invoices.filter((inv) =>
+        filters.status!.includes(inv.status)
+      );
+    }
 
-    return invoices.filter((invoice) => {
-      const uploadDate = new Date(invoice.uploadedAt).getTime();
-      return uploadDate >= start && uploadDate <= end;
-    });
-  }
+    if (filters.dateFrom) {
+      const fromDate = new Date(filters.dateFrom);
+      invoices = invoices.filter(
+        (inv) => new Date(inv.issueDate) >= fromDate
+      );
+    }
 
-  getInvoiceStats(): {
-    total: number;
-    byStatus: Record<string, number>;
-    totalAmount: number;
-  } {
-    const invoices = this.getAllInvoices();
-    const byStatus: Record<string, number> = {};
-    let totalAmount = 0;
+    if (filters.dateTo) {
+      const toDate = new Date(filters.dateTo);
+      invoices = invoices.filter(
+        (inv) => new Date(inv.issueDate) <= toDate
+      );
+    }
 
-    invoices.forEach((invoice) => {
-      byStatus[invoice.status] = (byStatus[invoice.status] || 0) + 1;
-      if (invoice.extractedData?.totalAmount) {
-        totalAmount += invoice.extractedData.totalAmount;
-      }
-    });
+    if (filters.minAmount !== undefined) {
+      invoices = invoices.filter((inv) => inv.total >= filters.minAmount!);
+    }
 
-    return {
-      total: invoices.length,
-      byStatus,
-      totalAmount
-    };
+    if (filters.maxAmount !== undefined) {
+      invoices = invoices.filter((inv) => inv.total <= filters.maxAmount!);
+    }
+
+    return invoices;
   }
 }
 

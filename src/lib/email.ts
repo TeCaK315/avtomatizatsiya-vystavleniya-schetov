@@ -1,259 +1,284 @@
-import { EmailService as IEmailService, Invoice } from '@/types';
+import nodemailer from 'nodemailer';
+import type { Invoice } from '@/types';
 
-class EmailServiceImpl implements IEmailService {
-  private apiEndpoint: string;
+/**
+ * Get email service configuration from environment variables
+ */
+function getEmailConfig() {
+  // Check if all required env vars are present
+  const host = process.env.EMAIL_HOST;
+  const port = process.env.EMAIL_PORT;
+  const user = process.env.EMAIL_USER;
+  const pass = process.env.EMAIL_PASS;
+  const from = process.env.EMAIL_FROM;
 
-  constructor() {
-    this.apiEndpoint = '/api/email/send';
+  if (!host || !port || !user || !pass || !from) {
+    console.warn('Email service not configured. Missing environment variables.');
+    return null;
   }
 
-  async sendInvoice(
-    invoice: Invoice,
-    recipients: string[],
-    subject: string,
-    message: string
-  ): Promise<boolean> {
-    try {
-      // Validate all recipients
-      const invalidEmails = recipients.filter(email => !this.validateEmail(email));
-      if (invalidEmails.length > 0) {
-        console.error('Invalid email addresses:', invalidEmails);
-        throw new Error(`Invalid email addresses: ${invalidEmails.join(', ')}`);
-      }
-
-      // Prepare email data
-      const emailData = {
-        to: recipients,
-        subject: subject || this.generateDefaultSubject(invoice),
-        html: this.generateEmailHTML(invoice, message),
-        text: this.generateEmailText(invoice, message),
-        attachments: [
-          {
-            filename: invoice.fileName,
-            path: invoice.fileUrl,
-            contentType: invoice.fileType
-          }
-        ]
-      };
-
-      // Send via API endpoint (which will use nodemailer on server side)
-      const response = await fetch(this.apiEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(emailData)
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Failed to send email');
-      }
-
-      const result = await response.json();
-      return result.success;
-    } catch (error) {
-      console.error('Email sending error:', error);
-      return false;
-    }
-  }
-
-  validateEmail(email: string): boolean {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    
-    if (!emailRegex.test(email)) {
-      return false;
-    }
-
-    // Additional validation rules
-    const parts = email.split('@');
-    if (parts.length !== 2) {
-      return false;
-    }
-
-    const [localPart, domain] = parts;
-
-    // Local part validation
-    if (localPart.length === 0 || localPart.length > 64) {
-      return false;
-    }
-
-    // Domain validation
-    if (domain.length === 0 || domain.length > 255) {
-      return false;
-    }
-
-    const domainParts = domain.split('.');
-    if (domainParts.length < 2) {
-      return false;
-    }
-
-    // Check for valid TLD
-    const tld = domainParts[domainParts.length - 1];
-    if (tld.length < 2) {
-      return false;
-    }
-
-    return true;
-  }
-
-  private generateDefaultSubject(invoice: Invoice): string {
-    const invoiceNumber = invoice.extractedData?.invoiceNumber || 'N/A';
-    const vendorName = invoice.extractedData?.vendorName || 'Vendor';
-    return `Invoice ${invoiceNumber} from ${vendorName}`;
-  }
-
-  private generateEmailHTML(invoice: Invoice, customMessage: string): string {
-    const data = invoice.extractedData;
-    
-    if (!data) {
-      return `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #333;">Invoice</h2>
-          <p>${customMessage || 'Please find the attached invoice.'}</p>
-          <p style="color: #666; font-size: 12px; margin-top: 30px;">
-            This is an automated email. Please do not reply.
-          </p>
-        </div>
-      `;
-    }
-
-    return `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0;">
-        <div style="background-color: #f8f9fa; padding: 20px; margin-bottom: 20px;">
-          <h2 style="color: #333; margin: 0;">Invoice ${data.invoiceNumber}</h2>
-          <p style="color: #666; margin: 5px 0 0 0;">From ${data.vendorName}</p>
-        </div>
-
-        ${customMessage ? `
-          <div style="margin-bottom: 20px; padding: 15px; background-color: #f0f7ff; border-left: 4px solid #2563eb;">
-            <p style="margin: 0; color: #333;">${customMessage}</p>
-          </div>
-        ` : ''}
-
-        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-          <tr>
-            <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">
-              <strong>Invoice Date:</strong>
-            </td>
-            <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">
-              ${new Date(data.invoiceDate).toLocaleDateString()}
-            </td>
-          </tr>
-          <tr>
-            <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">
-              <strong>Due Date:</strong>
-            </td>
-            <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">
-              ${new Date(data.dueDate).toLocaleDateString()}
-            </td>
-          </tr>
-          <tr>
-            <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">
-              <strong>Customer:</strong>
-            </td>
-            <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">
-              ${data.customerName}
-            </td>
-          </tr>
-        </table>
-
-        <h3 style="color: #333; margin-top: 30px;">Items</h3>
-        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-          <thead>
-            <tr style="background-color: #f8f9fa;">
-              <th style="padding: 10px; text-align: left; border-bottom: 2px solid #dee2e6;">Description</th>
-              <th style="padding: 10px; text-align: right; border-bottom: 2px solid #dee2e6;">Qty</th>
-              <th style="padding: 10px; text-align: right; border-bottom: 2px solid #dee2e6;">Price</th>
-              <th style="padding: 10px; text-align: right; border-bottom: 2px solid #dee2e6;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${data.items.map(item => `
-              <tr>
-                <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">${item.description}</td>
-                <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e0e0e0;">${item.quantity}</td>
-                <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e0e0e0;">${data.currency} ${item.unitPrice.toFixed(2)}</td>
-                <td style="padding: 10px; text-align: right; border-bottom: 1px solid #e0e0e0;">${data.currency} ${item.total.toFixed(2)}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-
-        <table style="width: 100%; margin-top: 20px;">
-          <tr>
-            <td style="text-align: right; padding: 5px;"><strong>Subtotal:</strong></td>
-            <td style="text-align: right; padding: 5px; width: 150px;">${data.currency} ${data.subtotal.toFixed(2)}</td>
-          </tr>
-          <tr>
-            <td style="text-align: right; padding: 5px;"><strong>Tax:</strong></td>
-            <td style="text-align: right; padding: 5px;">${data.currency} ${data.taxAmount.toFixed(2)}</td>
-          </tr>
-          <tr style="background-color: #f8f9fa;">
-            <td style="text-align: right; padding: 10px; font-size: 18px;"><strong>Total:</strong></td>
-            <td style="text-align: right; padding: 10px; font-size: 18px;"><strong>${data.currency} ${data.totalAmount.toFixed(2)}</strong></td>
-          </tr>
-        </table>
-
-        ${data.notes ? `
-          <div style="margin-top: 30px; padding: 15px; background-color: #f8f9fa; border-radius: 4px;">
-            <h4 style="margin: 0 0 10px 0; color: #333;">Notes</h4>
-            <p style="margin: 0; color: #666;">${data.notes}</p>
-          </div>
-        ` : ''}
-
-        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-          <p style="color: #666; font-size: 12px; margin: 0;">
-            This is an automated email. Please do not reply.
-          </p>
-          <p style="color: #666; font-size: 12px; margin: 5px 0 0 0;">
-            For questions, please contact ${data.vendorEmail || data.vendorName}.
-          </p>
-        </div>
-      </div>
-    `;
-  }
-
-  private generateEmailText(invoice: Invoice, customMessage: string): string {
-    const data = invoice.extractedData;
-    
-    if (!data) {
-      return `
-Invoice
-
-${customMessage || 'Please find the attached invoice.'}
-
-This is an automated email. Please do not reply.
-      `.trim();
-    }
-
-    return `
-Invoice ${data.invoiceNumber}
-From: ${data.vendorName}
-
-${customMessage ? `${customMessage}\n\n` : ''}
-
-Invoice Details:
-- Invoice Date: ${new Date(data.invoiceDate).toLocaleDateString()}
-- Due Date: ${new Date(data.dueDate).toLocaleDateString()}
-- Customer: ${data.customerName}
-
-Items:
-${data.items.map(item => 
-  `${item.description} - Qty: ${item.quantity} x ${data.currency} ${item.unitPrice.toFixed(2)} = ${data.currency} ${item.total.toFixed(2)}`
-).join('\n')}
-
-Summary:
-Subtotal: ${data.currency} ${data.subtotal.toFixed(2)}
-Tax: ${data.currency} ${data.taxAmount.toFixed(2)}
-Total: ${data.currency} ${data.totalAmount.toFixed(2)}
-
-${data.notes ? `\nNotes:\n${data.notes}\n` : ''}
-
-This is an automated email. Please do not reply.
-For questions, please contact ${data.vendorEmail || data.vendorName}.
-    `.trim();
-  }
+  return {
+    host,
+    port: parseInt(port, 10),
+    secure: port === '465', // true for 465, false for other ports
+    auth: {
+      user,
+      pass,
+    },
+    from,
+  };
 }
 
-export const EmailService = new EmailServiceImpl();
+/**
+ * Create email transporter (lazy initialization)
+ */
+function createTransporter() {
+  const config = getEmailConfig();
+  
+  if (!config) {
+    return null;
+  }
+
+  return nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: config.auth,
+  });
+}
+
+/**
+ * Format invoice data as HTML email body
+ */
+function formatInvoiceEmailHTML(invoice: Invoice): string {
+  const itemsHTML = invoice.items
+    .map(
+      (item) => `
+        <tr>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${item.description}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${item.quantity}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">$${item.unitPrice.toFixed(2)}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">$${item.total.toFixed(2)}</td>
+        </tr>
+      `
+    )
+    .join('');
+
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Invoice ${invoice.invoiceNumber}</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px;">
+        <div style="background-color: #f9fafb; padding: 30px; border-radius: 8px;">
+          <h1 style="color: #1f2937; margin-bottom: 10px;">Invoice ${invoice.invoiceNumber}</h1>
+          <p style="color: #6b7280; margin-bottom: 30px;">Issue Date: ${new Date(invoice.issueDate).toLocaleDateString()}</p>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px;">
+            <div>
+              <h3 style="color: #1f2937; margin-bottom: 10px;">From:</h3>
+              <p style="margin: 5px 0;"><strong>${invoice.from.name}</strong></p>
+              <p style="margin: 5px 0; color: #6b7280;">${invoice.from.email}</p>
+              ${invoice.from.phone ? `<p style="margin: 5px 0; color: #6b7280;">${invoice.from.phone}</p>` : ''}
+              ${invoice.from.address ? `
+                <p style="margin: 5px 0; color: #6b7280;">
+                  ${invoice.from.address.street}<br>
+                  ${invoice.from.address.city}, ${invoice.from.address.state} ${invoice.from.address.zipCode}<br>
+                  ${invoice.from.address.country}
+                </p>
+              ` : ''}
+            </div>
+            
+            <div>
+              <h3 style="color: #1f2937; margin-bottom: 10px;">Bill To:</h3>
+              <p style="margin: 5px 0;"><strong>${invoice.to.name}</strong></p>
+              <p style="margin: 5px 0; color: #6b7280;">${invoice.to.email}</p>
+              ${invoice.to.phone ? `<p style="margin: 5px 0; color: #6b7280;">${invoice.to.phone}</p>` : ''}
+              ${invoice.to.address ? `
+                <p style="margin: 5px 0; color: #6b7280;">
+                  ${invoice.to.address.street}<br>
+                  ${invoice.to.address.city}, ${invoice.to.address.state} ${invoice.to.address.zipCode}<br>
+                  ${invoice.to.address.country}
+                </p>
+              ` : ''}
+            </div>
+          </div>
+          
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; background-color: white; border-radius: 8px; overflow: hidden;">
+            <thead>
+              <tr style="background-color: #1f2937; color: white;">
+                <th style="padding: 12px; text-align: left;">Description</th>
+                <th style="padding: 12px; text-align: center;">Qty</th>
+                <th style="padding: 12px; text-align: right;">Unit Price</th>
+                <th style="padding: 12px; text-align: right;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsHTML}
+            </tbody>
+          </table>
+          
+          <div style="text-align: right; margin-bottom: 30px;">
+            <p style="margin: 8px 0; color: #6b7280;">Subtotal: <strong>$${invoice.subtotal.toFixed(2)}</strong></p>
+            <p style="margin: 8px 0; color: #6b7280;">Tax (${invoice.taxRate}%): <strong>$${invoice.taxAmount.toFixed(2)}</strong></p>
+            <p style="margin: 8px 0; font-size: 1.25rem; color: #1f2937;">Total: <strong>$${invoice.total.toFixed(2)}</strong></p>
+            <p style="margin: 8px 0; color: #6b7280;">Due Date: <strong>${new Date(invoice.dueDate).toLocaleDateString()}</strong></p>
+          </div>
+          
+          ${invoice.notes ? `
+            <div style="margin-bottom: 20px;">
+              <h3 style="color: #1f2937; margin-bottom: 10px;">Notes:</h3>
+              <p style="color: #6b7280;">${invoice.notes}</p>
+            </div>
+          ` : ''}
+          
+          ${invoice.terms ? `
+            <div style="margin-bottom: 20px;">
+              <h3 style="color: #1f2937; margin-bottom: 10px;">Terms:</h3>
+              <p style="color: #6b7280;">${invoice.terms}</p>
+            </div>
+          ` : ''}
+          
+          <div style="margin-top: 40px; padding-top: 20px; border-top: 2px solid #e5e7eb; text-align: center; color: #6b7280;">
+            <p>Thank you for your business!</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+}
+
+/**
+ * Format invoice data as plain text email body
+ */
+function formatInvoiceEmailText(invoice: Invoice): string {
+  const itemsText = invoice.items
+    .map(
+      (item) =>
+        `${item.description} - Qty: ${item.quantity} x $${item.unitPrice.toFixed(2)} = $${item.total.toFixed(2)}`
+    )
+    .join('\n');
+
+  let text = `
+INVOICE ${invoice.invoiceNumber}
+Issue Date: ${new Date(invoice.issueDate).toLocaleDateString()}
+
+FROM:
+${invoice.from.name}
+${invoice.from.email}
+${invoice.from.phone || ''}
+`;
+
+  if (invoice.from.address) {
+    text += `${invoice.from.address.street}
+${invoice.from.address.city}, ${invoice.from.address.state} ${invoice.from.address.zipCode}
+${invoice.from.address.country}
+`;
+  }
+
+  text += `
+BILL TO:
+${invoice.to.name}
+${invoice.to.email}
+${invoice.to.phone || ''}
+`;
+
+  if (invoice.to.address) {
+    text += `${invoice.to.address.street}
+${invoice.to.address.city}, ${invoice.to.address.state} ${invoice.to.address.zipCode}
+${invoice.to.address.country}
+`;
+  }
+
+  text += `
+ITEMS:
+${itemsText}
+
+SUMMARY:
+Subtotal: $${invoice.subtotal.toFixed(2)}
+Tax (${invoice.taxRate}%): $${invoice.taxAmount.toFixed(2)}
+Total: $${invoice.total.toFixed(2)}
+
+Due Date: ${new Date(invoice.dueDate).toLocaleDateString()}
+`;
+
+  if (invoice.notes) {
+    text += `\nNOTES:\n${invoice.notes}\n`;
+  }
+
+  if (invoice.terms) {
+    text += `\nTERMS:\n${invoice.terms}\n`;
+  }
+
+  text += '\nThank you for your business!';
+
+  return text;
+}
+
+/**
+ * Send invoice via email
+ * For prototype, this is a mock implementation that logs to console
+ * In production, this would use nodemailer to send actual emails
+ */
+export async function sendInvoiceEmail(
+  invoice: Invoice,
+  recipientEmail: string,
+  subject?: string,
+  message?: string
+): Promise<boolean> {
+  try {
+    const transporter = createTransporter();
+
+    // If email is not configured, use mock mode (log to console)
+    if (!transporter) {
+      console.log('=== MOCK EMAIL SEND ===');
+      console.log('To:', recipientEmail);
+      console.log('Subject:', subject || `Invoice ${invoice.invoiceNumber}`);
+      console.log('Invoice:', invoice.invoiceNumber);
+      console.log('Amount:', `$${invoice.total.toFixed(2)}`);
+      console.log('Due Date:', new Date(invoice.dueDate).toLocaleDateString());
+      if (message) {
+        console.log('Custom Message:', message);
+      }
+      console.log('======================');
+      
+      // Simulate network delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      return true;
+    }
+
+    // Real email sending
+    const config = getEmailConfig();
+    if (!config) {
+      throw new Error('Email configuration not available');
+    }
+
+    const emailSubject = subject || `Invoice ${invoice.invoiceNumber} from ${invoice.from.name}`;
+    const htmlBody = formatInvoiceEmailHTML(invoice);
+    const textBody = formatInvoiceEmailText(invoice);
+
+    const customMessage = message
+      ? `<div style="background-color: #eff6ff; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+           <p style="margin: 0; color: #1e40af;">${message}</p>
+         </div>`
+      : '';
+
+    await transporter.sendMail({
+      from: config.from,
+      to: recipientEmail,
+      subject: emailSubject,
+      text: message ? `${message}\n\n${textBody}` : textBody,
+      html: customMessage + htmlBody,
+    });
+
+    console.log(`Invoice ${invoice.invoiceNumber} sent successfully to ${recipientEmail}`);
+    return true;
+  } catch (error) {
+    console.error('Failed to send invoice email:', error);
+    return false;
+  }
+}

@@ -1,364 +1,368 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Invoice, ExtractedData, InvoiceFormProps, InvoiceItem } from '@/types';
 import { Plus, Trash2, Save, X } from 'lucide-react';
+import {
+  InvoiceFormProps,
+  CreateInvoiceRequest,
+  UpdateInvoiceRequest,
+  Contact,
+  InvoiceItem,
+  InvoiceStatus,
+  PaymentMethod
+} from '@/types';
+import { validateEmail, validateAmount } from '@/lib/validators';
+import { formatCurrency } from '@/lib/formatters';
+import { calculateLineItemTotal, calculateInvoiceTotal } from '@/lib/invoice-calculator';
 
-export function InvoiceForm({ invoice, onSave, onCancel, isLoading = false }: InvoiceFormProps) {
-  const [formData, setFormData] = useState<ExtractedData>({
-    invoiceNumber: '',
-    invoiceDate: '',
-    dueDate: '',
-    vendorName: '',
-    vendorAddress: '',
-    vendorEmail: '',
-    vendorPhone: '',
-    customerName: '',
-    customerAddress: '',
-    customerEmail: '',
-    items: [],
-    subtotal: 0,
-    taxAmount: 0,
-    totalAmount: 0,
-    currency: 'USD',
-    notes: '',
-    confidence: 0
+export function InvoiceForm({ invoice, onSubmit, onCancel, isLoading = false }: InvoiceFormProps) {
+  const [from, setFrom] = useState<Contact>({
+    name: invoice?.from.name || '',
+    email: invoice?.from.email || '',
+    phone: invoice?.from.phone || '',
+    address: invoice?.from.address || {
+      street: '',
+      city: '',
+      state: '',
+      zipCode: '',
+      country: ''
+    },
+    taxId: invoice?.from.taxId || ''
   });
+
+  const [to, setTo] = useState<Contact>({
+    name: invoice?.to.name || '',
+    email: invoice?.to.email || '',
+    phone: invoice?.to.phone || '',
+    address: invoice?.to.address || {
+      street: '',
+      city: '',
+      state: '',
+      zipCode: '',
+      country: ''
+    },
+    taxId: invoice?.to.taxId || ''
+  });
+
+  const [items, setItems] = useState<Omit<InvoiceItem, 'id' | 'total'>[]>(
+    invoice?.items.map(item => ({
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      taxRate: item.taxRate
+    })) || [
+      { description: '', quantity: 1, unitPrice: 0, taxRate: 0 }
+    ]
+  );
+
+  const [dueDate, setDueDate] = useState<string>(
+    invoice?.dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  );
+
+  const [taxRate, setTaxRate] = useState<number>(invoice?.taxRate || 0);
+  const [notes, setNotes] = useState<string>(invoice?.notes || '');
+  const [terms, setTerms] = useState<string>(invoice?.terms || '');
+  const [status, setStatus] = useState<InvoiceStatus>(invoice?.status || InvoiceStatus.DRAFT);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | undefined>(invoice?.paymentMethod);
+  const [paidDate, setPaidDate] = useState<string>(invoice?.paidDate || '');
+  const [paidAmount, setPaidAmount] = useState<number>(invoice?.paidAmount || 0);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    if (invoice.extractedData) {
-      setFormData(invoice.extractedData);
-    }
-  }, [invoice]);
+  const totals = calculateInvoiceTotal(
+    items.map((item, index) => ({
+      id: `temp-${index}`,
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      taxRate: item.taxRate || 0,
+      total: calculateLineItemTotal(item.quantity, item.unitPrice, item.taxRate)
+    })),
+    taxRate
+  );
 
-  const validateForm = (): boolean => {
+  const addItem = () => {
+    setItems([...items, { description: '', quantity: 1, unitPrice: 0, taxRate: 0 }]);
+  };
+
+  const removeItem = (index: number) => {
+    if (items.length > 1) {
+      setItems(items.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateItem = (index: number, field: keyof Omit<InvoiceItem, 'id' | 'total'>, value: string | number) => {
+    const newItems = [...items];
+    newItems[index] = { ...newItems[index], [field]: value };
+    setItems(newItems);
+  };
+
+  const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
 
-    if (!formData.invoiceNumber.trim()) {
-      newErrors.invoiceNumber = 'Invoice number is required';
-    }
+    if (!from.name.trim()) newErrors.fromName = 'Sender name is required';
+    if (!from.email.trim()) newErrors.fromEmail = 'Sender email is required';
+    else if (!validateEmail(from.email)) newErrors.fromEmail = 'Invalid sender email';
 
-    if (!formData.invoiceDate) {
-      newErrors.invoiceDate = 'Invoice date is required';
-    }
+    if (!to.name.trim()) newErrors.toName = 'Recipient name is required';
+    if (!to.email.trim()) newErrors.toEmail = 'Recipient email is required';
+    else if (!validateEmail(to.email)) newErrors.toEmail = 'Invalid recipient email';
 
-    if (!formData.dueDate) {
-      newErrors.dueDate = 'Due date is required';
-    }
+    if (!dueDate) newErrors.dueDate = 'Due date is required';
 
-    if (!formData.vendorName.trim()) {
-      newErrors.vendorName = 'Vendor name is required';
-    }
-
-    if (!formData.customerName.trim()) {
-      newErrors.customerName = 'Customer name is required';
-    }
-
-    if (formData.vendorEmail && !isValidEmail(formData.vendorEmail)) {
-      newErrors.vendorEmail = 'Invalid email format';
-    }
-
-    if (formData.customerEmail && !isValidEmail(formData.customerEmail)) {
-      newErrors.customerEmail = 'Invalid email format';
-    }
-
-    if (formData.items.length === 0) {
-      newErrors.items = 'At least one item is required';
-    }
-
-    formData.items.forEach((item, index) => {
+    items.forEach((item, index) => {
       if (!item.description.trim()) {
-        newErrors[`item_${index}_description`] = 'Description is required';
+        newErrors[`item${index}Description`] = 'Description is required';
       }
       if (item.quantity <= 0) {
-        newErrors[`item_${index}_quantity`] = 'Quantity must be greater than 0';
+        newErrors[`item${index}Quantity`] = 'Quantity must be greater than 0';
       }
-      if (item.unitPrice < 0) {
-        newErrors[`item_${index}_unitPrice`] = 'Unit price cannot be negative';
+      if (!validateAmount(item.unitPrice)) {
+        newErrors[`item${index}UnitPrice`] = 'Invalid unit price';
       }
     });
+
+    if (taxRate < 0 || taxRate > 100) {
+      newErrors.taxRate = 'Tax rate must be between 0 and 100';
+    }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const isValidEmail = (email: string): boolean => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
-
-  const calculateTotals = (items: InvoiceItem[]): { subtotal: number; taxAmount: number; totalAmount: number } => {
-    const subtotal = items.reduce((sum, item) => sum + item.total, 0);
-    const taxAmount = items.reduce((sum, item) => {
-      const taxRate = item.taxRate || 0;
-      return sum + (item.total * taxRate / 100);
-    }, 0);
-    const totalAmount = subtotal + taxAmount;
-
-    return { subtotal, taxAmount, totalAmount };
-  };
-
-  const handleInputChange = (field: keyof ExtractedData, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    if (errors[field]) {
-      setErrors(prev => {
-        const newErrors = { ...prev };
-        delete newErrors[field];
-        return newErrors;
-      });
-    }
-  };
-
-  const handleAddItem = () => {
-    const newItem: InvoiceItem = {
-      id: `item_${Date.now()}`,
-      description: '',
-      quantity: 1,
-      unitPrice: 0,
-      total: 0,
-      taxRate: 0
-    };
-
-    setFormData(prev => ({
-      ...prev,
-      items: [...prev.items, newItem]
-    }));
-  };
-
-  const handleRemoveItem = (itemId: string) => {
-    const updatedItems = formData.items.filter(item => item.id !== itemId);
-    const totals = calculateTotals(updatedItems);
-
-    setFormData(prev => ({
-      ...prev,
-      items: updatedItems,
-      ...totals
-    }));
-  };
-
-  const handleItemChange = (itemId: string, field: keyof InvoiceItem, value: string | number) => {
-    const updatedItems = formData.items.map(item => {
-      if (item.id === itemId) {
-        const updatedItem = { ...item, [field]: value };
-        
-        if (field === 'quantity' || field === 'unitPrice') {
-          updatedItem.total = updatedItem.quantity * updatedItem.unitPrice;
-        }
-
-        return updatedItem;
-      }
-      return item;
-    });
-
-    const totals = calculateTotals(updatedItems);
-
-    setFormData(prev => ({
-      ...prev,
-      items: updatedItems,
-      ...totals
-    }));
-
-    const errorKey = `item_${formData.items.findIndex(i => i.id === itemId)}_${field}`;
-    if (errors[errorKey]) {
-      setErrors(prev => {
-        const newErrors = { ...prev };
-        delete newErrors[errorKey];
-        return newErrors;
-      });
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!validateForm()) {
+    if (!validate()) {
       return;
     }
 
-    try {
-      await onSave(formData);
-    } catch (error) {
-      console.error('Error saving invoice:', error);
-    }
+    const data: CreateInvoiceRequest | UpdateInvoiceRequest = invoice
+      ? {
+          from,
+          to,
+          items,
+          dueDate,
+          status,
+          taxRate,
+          notes: notes || undefined,
+          terms: terms || undefined,
+          paymentMethod: paymentMethod || undefined,
+          paidDate: paidDate || undefined,
+          paidAmount: paidAmount > 0 ? paidAmount : undefined
+        }
+      : {
+          from,
+          to,
+          items,
+          dueDate,
+          taxRate,
+          notes: notes || undefined,
+          terms: terms || undefined
+        };
+
+    await onSubmit(data);
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="bg-gray-900 rounded-lg p-6 space-y-6">
-        <h2 className="text-xl font-semibold text-white mb-4">Invoice Details</h2>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <form onSubmit={handleSubmit} className="space-y-8">
+      {/* From Section */}
+      <div className="bg-gray-900 rounded-lg p-6">
+        <h3 className="text-lg font-semibold text-white mb-4">From (Your Details)</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Invoice Number *
-            </label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Name *</label>
             <input
               type="text"
-              value={formData.invoiceNumber}
-              onChange={(e) => handleInputChange('invoiceNumber', e.target.value)}
-              className={`w-full px-3 py-2 bg-gray-800 border ${errors.invoiceNumber ? 'border-red-500' : 'border-gray-700'} rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
+              value={from.name}
+              onChange={(e) => setFrom({ ...from, name: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={isLoading}
             />
-            {errors.invoiceNumber && (
-              <p className="text-red-500 text-xs mt-1">{errors.invoiceNumber}</p>
-            )}
+            {errors.fromName && <p className="text-red-400 text-sm mt-1">{errors.fromName}</p>}
           </div>
-
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Invoice Date *
-            </label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Email *</label>
             <input
-              type="date"
-              value={formData.invoiceDate}
-              onChange={(e) => handleInputChange('invoiceDate', e.target.value)}
-              className={`w-full px-3 py-2 bg-gray-800 border ${errors.invoiceDate ? 'border-red-500' : 'border-gray-700'} rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
+              type="email"
+              value={from.email}
+              onChange={(e) => setFrom({ ...from, email: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={isLoading}
             />
-            {errors.invoiceDate && (
-              <p className="text-red-500 text-xs mt-1">{errors.invoiceDate}</p>
-            )}
+            {errors.fromEmail && <p className="text-red-400 text-sm mt-1">{errors.fromEmail}</p>}
           </div>
-
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Due Date *
-            </label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Phone</label>
             <input
-              type="date"
-              value={formData.dueDate}
-              onChange={(e) => handleInputChange('dueDate', e.target.value)}
-              className={`w-full px-3 py-2 bg-gray-800 border ${errors.dueDate ? 'border-red-500' : 'border-gray-700'} rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
+              type="tel"
+              value={from.phone || ''}
+              onChange={(e) => setFrom({ ...from, phone: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={isLoading}
             />
-            {errors.dueDate && (
-              <p className="text-red-500 text-xs mt-1">{errors.dueDate}</p>
-            )}
           </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-4">
-            <h3 className="text-lg font-medium text-white">Vendor Information</h3>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Vendor Name *
-              </label>
-              <input
-                type="text"
-                value={formData.vendorName}
-                onChange={(e) => handleInputChange('vendorName', e.target.value)}
-                className={`w-full px-3 py-2 bg-gray-800 border ${errors.vendorName ? 'border-red-500' : 'border-gray-700'} rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                disabled={isLoading}
-              />
-              {errors.vendorName && (
-                <p className="text-red-500 text-xs mt-1">{errors.vendorName}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Vendor Address
-              </label>
-              <textarea
-                value={formData.vendorAddress}
-                onChange={(e) => handleInputChange('vendorAddress', e.target.value)}
-                rows={3}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isLoading}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Vendor Email
-              </label>
-              <input
-                type="email"
-                value={formData.vendorEmail || ''}
-                onChange={(e) => handleInputChange('vendorEmail', e.target.value)}
-                className={`w-full px-3 py-2 bg-gray-800 border ${errors.vendorEmail ? 'border-red-500' : 'border-gray-700'} rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                disabled={isLoading}
-              />
-              {errors.vendorEmail && (
-                <p className="text-red-500 text-xs mt-1">{errors.vendorEmail}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Vendor Phone
-              </label>
-              <input
-                type="tel"
-                value={formData.vendorPhone || ''}
-                onChange={(e) => handleInputChange('vendorPhone', e.target.value)}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isLoading}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-lg font-medium text-white">Customer Information</h3>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Customer Name *
-              </label>
-              <input
-                type="text"
-                value={formData.customerName}
-                onChange={(e) => handleInputChange('customerName', e.target.value)}
-                className={`w-full px-3 py-2 bg-gray-800 border ${errors.customerName ? 'border-red-500' : 'border-gray-700'} rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                disabled={isLoading}
-              />
-              {errors.customerName && (
-                <p className="text-red-500 text-xs mt-1">{errors.customerName}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Customer Address
-              </label>
-              <textarea
-                value={formData.customerAddress}
-                onChange={(e) => handleInputChange('customerAddress', e.target.value)}
-                rows={3}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={isLoading}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Customer Email
-              </label>
-              <input
-                type="email"
-                value={formData.customerEmail || ''}
-                onChange={(e) => handleInputChange('customerEmail', e.target.value)}
-                className={`w-full px-3 py-2 bg-gray-800 border ${errors.customerEmail ? 'border-red-500' : 'border-gray-700'} rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                disabled={isLoading}
-              />
-              {errors.customerEmail && (
-                <p className="text-red-500 text-xs mt-1">{errors.customerEmail}</p>
-              )}
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Tax ID</label>
+            <input
+              type="text"
+              value={from.taxId || ''}
+              onChange={(e) => setFrom({ ...from, taxId: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
+            />
           </div>
         </div>
       </div>
 
-      <div className="bg-gray-900 rounded-lg p-6 space-y-4">
+      {/* To Section */}
+      <div className="bg-gray-900 rounded-lg p-6">
+        <h3 className="text-lg font-semibold text-white mb-4">To (Client Details)</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Name *</label>
+            <input
+              type="text"
+              value={to.name}
+              onChange={(e) => setTo({ ...to, name: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
+            />
+            {errors.toName && <p className="text-red-400 text-sm mt-1">{errors.toName}</p>}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Email *</label>
+            <input
+              type="email"
+              value={to.email}
+              onChange={(e) => setTo({ ...to, email: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
+            />
+            {errors.toEmail && <p className="text-red-400 text-sm mt-1">{errors.toEmail}</p>}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Phone</label>
+            <input
+              type="tel"
+              value={to.phone || ''}
+              onChange={(e) => setTo({ ...to, phone: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Tax ID</label>
+            <input
+              type="text"
+              value={to.taxId || ''}
+              onChange={(e) => setTo({ ...to, taxId: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Invoice Details */}
+      <div className="bg-gray-900 rounded-lg p-6">
+        <h3 className="text-lg font-semibold text-white mb-4">Invoice Details</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Due Date *</label>
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
+            />
+            {errors.dueDate && <p className="text-red-400 text-sm mt-1">{errors.dueDate}</p>}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Tax Rate (%)</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="100"
+              value={taxRate}
+              onChange={(e) => setTaxRate(parseFloat(e.target.value) || 0)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
+            />
+            {errors.taxRate && <p className="text-red-400 text-sm mt-1">{errors.taxRate}</p>}
+          </div>
+          {invoice && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Status</label>
+                <select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as InvoiceStatus)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={isLoading}
+                >
+                  <option value={InvoiceStatus.DRAFT}>Draft</option>
+                  <option value={InvoiceStatus.SENT}>Sent</option>
+                  <option value={InvoiceStatus.PAID}>Paid</option>
+                  <option value={InvoiceStatus.OVERDUE}>Overdue</option>
+                  <option value={InvoiceStatus.CANCELLED}>Cancelled</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Payment Method</label>
+                <select
+                  value={paymentMethod || ''}
+                  onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod || undefined)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={isLoading}
+                >
+                  <option value="">Not specified</option>
+                  <option value={PaymentMethod.BANK_TRANSFER}>Bank Transfer</option>
+                  <option value={PaymentMethod.CREDIT_CARD}>Credit Card</option>
+                  <option value={PaymentMethod.PAYPAL}>PayPal</option>
+                  <option value={PaymentMethod.CASH}>Cash</option>
+                </select>
+              </div>
+              {status === InvoiceStatus.PAID && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">Paid Date</label>
+                    <input
+                      type="date"
+                      value={paidDate}
+                      onChange={(e) => setPaidDate(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={isLoading}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">Paid Amount</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={paidAmount}
+                      onChange={(e) => setPaidAmount(parseFloat(e.target.value) || 0)}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={isLoading}
+                    />
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Line Items */}
+      <div className="bg-gray-900 rounded-lg p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-medium text-white">Line Items</h3>
+          <h3 className="text-lg font-semibold text-white">Line Items</h3>
           <button
             type="button"
-            onClick={handleAddItem}
+            onClick={addItem}
             disabled={isLoading}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -366,147 +370,128 @@ export function InvoiceForm({ invoice, onSave, onCancel, isLoading = false }: In
             Add Item
           </button>
         </div>
-
-        {errors.items && (
-          <p className="text-red-500 text-sm">{errors.items}</p>
-        )}
-
-        <div className="space-y-3">
-          {formData.items.map((item, index) => (
-            <div key={item.id} className="bg-gray-800 rounded-lg p-4 space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-                <div className="md:col-span-4">
-                  <label className="block text-xs font-medium text-gray-400 mb-1">
-                    Description *
-                  </label>
+        <div className="space-y-4">
+          {items.map((item, index) => (
+            <div key={index} className="bg-gray-800 rounded-lg p-4">
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                <div className="md:col-span-5">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Description *</label>
                   <input
                     type="text"
                     value={item.description}
-                    onChange={(e) => handleItemChange(item.id, 'description', e.target.value)}
-                    className={`w-full px-3 py-2 bg-gray-700 border ${errors[`item_${index}_description`] ? 'border-red-500' : 'border-gray-600'} rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                    onChange={(e) => updateItem(index, 'description', e.target.value)}
+                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     disabled={isLoading}
                   />
-                  {errors[`item_${index}_description`] && (
-                    <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_description`]}</p>
+                  {errors[`item${index}Description`] && (
+                    <p className="text-red-400 text-sm mt-1">{errors[`item${index}Description`]}</p>
                   )}
                 </div>
-
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-gray-400 mb-1">
-                    Quantity *
-                  </label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Quantity *</label>
                   <input
                     type="number"
-                    min="0"
-                    step="0.01"
+                    step="1"
+                    min="1"
                     value={item.quantity}
-                    onChange={(e) => handleItemChange(item.id, 'quantity', parseFloat(e.target.value) || 0)}
-                    className={`w-full px-3 py-2 bg-gray-700 border ${errors[`item_${index}_quantity`] ? 'border-red-500' : 'border-gray-600'} rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                    onChange={(e) => updateItem(index, 'quantity', parseInt(e.target.value) || 1)}
+                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     disabled={isLoading}
                   />
-                  {errors[`item_${index}_quantity`] && (
-                    <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_quantity`]}</p>
+                  {errors[`item${index}Quantity`] && (
+                    <p className="text-red-400 text-sm mt-1">{errors[`item${index}Quantity`]}</p>
                   )}
                 </div>
-
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-gray-400 mb-1">
-                    Unit Price *
-                  </label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Unit Price *</label>
                   <input
                     type="number"
-                    min="0"
                     step="0.01"
+                    min="0"
                     value={item.unitPrice}
-                    onChange={(e) => handleItemChange(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
-                    className={`w-full px-3 py-2 bg-gray-700 border ${errors[`item_${index}_unitPrice`] ? 'border-red-500' : 'border-gray-600'} rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                    onChange={(e) => updateItem(index, 'unitPrice', parseFloat(e.target.value) || 0)}
+                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     disabled={isLoading}
                   />
-                  {errors[`item_${index}_unitPrice`] && (
-                    <p className="text-red-500 text-xs mt-1">{errors[`item_${index}_unitPrice`]}</p>
+                  {errors[`item${index}UnitPrice`] && (
+                    <p className="text-red-400 text-sm mt-1">{errors[`item${index}UnitPrice`]}</p>
                   )}
                 </div>
-
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-gray-400 mb-1">
-                    Tax Rate (%)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={item.taxRate || 0}
-                    onChange={(e) => handleItemChange(item.id, 'taxRate', parseFloat(e.target.value) || 0)}
-                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    disabled={isLoading}
-                  />
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Total</label>
+                  <div className="bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
+                    {formatCurrency(calculateLineItemTotal(item.quantity, item.unitPrice, item.taxRate))}
+                  </div>
                 </div>
-
                 <div className="md:col-span-1 flex items-end">
                   <button
                     type="button"
-                    onClick={() => handleRemoveItem(item.id)}
-                    disabled={isLoading}
-                    className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => removeItem(index)}
+                    disabled={items.length === 1 || isLoading}
+                    className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Trash2 className="w-4 h-4 mx-auto" />
                   </button>
-                </div>
-
-                <div className="md:col-span-1 flex items-end">
-                  <div className="text-right w-full">
-                    <label className="block text-xs font-medium text-gray-400 mb-1">
-                      Total
-                    </label>
-                    <div className="text-white font-medium">
-                      ${item.total.toFixed(2)}
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
           ))}
         </div>
+      </div>
 
-        <div className="border-t border-gray-700 pt-4 mt-4">
-          <div className="space-y-2 max-w-xs ml-auto">
-            <div className="flex justify-between text-gray-300">
-              <span>Subtotal:</span>
-              <span className="font-medium">${formData.subtotal.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-gray-300">
-              <span>Tax:</span>
-              <span className="font-medium">${formData.taxAmount.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-white text-lg font-semibold border-t border-gray-700 pt-2">
-              <span>Total:</span>
-              <span>${formData.totalAmount.toFixed(2)} {formData.currency}</span>
-            </div>
+      {/* Totals */}
+      <div className="bg-gray-900 rounded-lg p-6">
+        <div className="space-y-2 max-w-md ml-auto">
+          <div className="flex justify-between text-gray-300">
+            <span>Subtotal:</span>
+            <span className="font-semibold">{formatCurrency(totals.subtotal)}</span>
+          </div>
+          <div className="flex justify-between text-gray-300">
+            <span>Tax ({taxRate}%):</span>
+            <span className="font-semibold">{formatCurrency(totals.taxAmount)}</span>
+          </div>
+          <div className="flex justify-between text-white text-xl font-bold pt-2 border-t border-gray-700">
+            <span>Total:</span>
+            <span>{formatCurrency(totals.total)}</span>
           </div>
         </div>
       </div>
 
+      {/* Notes and Terms */}
       <div className="bg-gray-900 rounded-lg p-6">
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Notes
-        </label>
-        <textarea
-          value={formData.notes || ''}
-          onChange={(e) => handleInputChange('notes', e.target.value)}
-          rows={4}
-          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Additional notes or comments..."
-          disabled={isLoading}
-        />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Notes</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={4}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
+              placeholder="Additional notes for the client..."
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Terms & Conditions</label>
+            <textarea
+              value={terms}
+              onChange={(e) => setTerms(e.target.value)}
+              rows={4}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
+              placeholder="Payment terms, late fees, etc..."
+            />
+          </div>
+        </div>
       </div>
 
-      <div className="flex items-center justify-end gap-3">
+      {/* Actions */}
+      <div className="flex justify-end gap-4">
         <button
           type="button"
           onClick={onCancel}
           disabled={isLoading}
-          className="flex items-center gap-2 px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <X className="w-4 h-4" />
           Cancel
@@ -514,12 +499,13 @@ export function InvoiceForm({ invoice, onSave, onCancel, isLoading = false }: In
         <button
           type="submit"
           disabled={isLoading}
-          className="flex items-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Save className="w-4 h-4" />
-          {isLoading ? 'Saving...' : 'Save Invoice'}
+          {isLoading ? 'Saving...' : invoice ? 'Update Invoice' : 'Create Invoice'}
         </button>
       </div>
     </form>
   );
 }
+export default InvoiceForm;

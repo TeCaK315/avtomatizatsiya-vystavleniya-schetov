@@ -22,19 +22,6 @@ const config: Config = {
           900: '#0c4a6e',
           950: '#082f49'
         },
-        secondary: {
-          50: '#faf5ff',
-          100: '#f3e8ff',
-          200: '#e9d5ff',
-          300: '#d8b4fe',
-          400: '#c084fc',
-          500: '#a855f7',
-          600: '#9333ea',
-          700: '#7e22ce',
-          800: '#6b21a8',
-          900: '#581c87',
-          950: '#3b0764'
-        },
         success: {
           50: '#f0fdf4',
           100: '#dcfce7',
@@ -59,7 +46,7 @@ const config: Config = {
           800: '#92400e',
           900: '#78350f'
         },
-        error: {
+        danger: {
           50: '#fef2f2',
           100: '#fee2e2',
           200: '#fecaca',
@@ -83,13 +70,7 @@ const config: Config = {
       },
       borderRadius: {
         'xl': '1rem',
-        '2xl': '1.5rem',
-        '3xl': '2rem'
-      },
-      animation: {
-        'spin-slow': 'spin 3s linear infinite',
-        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'bounce-slow': 'bounce 2s infinite'
+        '2xl': '1.5rem'
       }
     }
   },
