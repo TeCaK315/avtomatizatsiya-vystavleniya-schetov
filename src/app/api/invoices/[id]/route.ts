@@ -1,189 +1,197 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { StorageService } from '@/lib/storage';
+import { calculateSubtotal, calculateTax, calculateTotal, calculateDiscount } from '@/lib/calculations';
 import {
-  GetInvoiceResponse,
   UpdateInvoiceRequest,
   UpdateInvoiceResponse,
+  GetInvoiceResponse,
   DeleteInvoiceResponse,
+  Invoice,
+  InvoiceItem,
 } from '@/types';
-import { storageService } from '@/lib/storage';
+
+const storage = new StorageService();
+
+function calculateItemTotal(quantity: number, unitPrice: number, taxRate: number): number {
+  return quantity * unitPrice * (1 + taxRate / 100);
+}
 
 export async function GET(_request : NextRequest,
   { params }: { params: { id: string } }
-) {
+): Promise<NextResponse<GetInvoiceResponse>> {
   try {
     const { id } = params;
 
-    if (!id) {
-      const response: GetInvoiceResponse = {
-        success: false,
-        error: 'Invoice ID is required',
-      };
-      return NextResponse.json(response, { status: 400 });
-    }
-
-    const invoice = storageService.getInvoice(id);
+    const invoice = storage.getInvoice(id);
 
     if (!invoice) {
-      const response: GetInvoiceResponse = {
-        success: false,
-        error: 'Invoice not found',
-      };
-      return NextResponse.json(response, { status: 404 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invoice not found',
+        },
+        { status: 404 }
+      );
     }
 
-    const response: GetInvoiceResponse = {
+    return NextResponse.json({
       success: true,
       invoice,
-    };
-
-    return NextResponse.json(response, { status: 200 });
+    });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Failed to fetch invoice';
-    
-    const response: GetInvoiceResponse = {
-      success: false,
-      error: errorMessage,
-    };
-
-    return NextResponse.json(response, { status: 500 });
+    console.error('Error fetching invoice:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch invoice',
+      },
+      { status: 500 }
+    );
   }
 }
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: { id: string } }
-) {
+): Promise<NextResponse<UpdateInvoiceResponse>> {
   try {
     const { id } = params;
+    const body: UpdateInvoiceRequest = await request.json();
 
-    if (!id) {
-      const response: UpdateInvoiceResponse = {
-        success: false,
-        error: 'Invoice ID is required',
-      };
-      return NextResponse.json(response, { status: 400 });
+    const existingInvoice = storage.getInvoice(id);
+
+    if (!existingInvoice) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invoice not found',
+        },
+        { status: 404 }
+      );
     }
 
-    const body = await request.json();
-    const updateData = body as UpdateInvoiceRequest;
-
-    if (updateData.clientEmail) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(updateData.clientEmail)) {
-        const response: UpdateInvoiceResponse = {
-          success: false,
-          error: 'Invalid email format',
-        };
-        return NextResponse.json(response, { status: 400 });
-      }
-    }
-
-    if (updateData.taxRate !== undefined) {
-      if (typeof updateData.taxRate !== 'number' || updateData.taxRate < 0 || updateData.taxRate > 100) {
-        const response: UpdateInvoiceResponse = {
-          success: false,
-          error: 'Tax rate must be a number between 0 and 100',
-        };
-        return NextResponse.json(response, { status: 400 });
-      }
-    }
-
-    if (updateData.items) {
-      if (!Array.isArray(updateData.items)) {
-        const response: UpdateInvoiceResponse = {
-          success: false,
-          error: 'Items must be an array',
-        };
-        return NextResponse.json(response, { status: 400 });
-      }
-
-      for (const item of updateData.items) {
-        if (!item.description || typeof item.quantity !== 'number' || typeof item.unitPrice !== 'number') {
-          const response: UpdateInvoiceResponse = {
+    // If clientId is being updated, validate the new client exists
+    let client = existingInvoice.client;
+    if (body.clientId && body.clientId !== existingInvoice.clientId) {
+      const newClient = storage.getClient(body.clientId);
+      if (!newClient) {
+        return NextResponse.json(
+          {
             success: false,
-            error: 'Each item must have description (string), quantity (number), and unitPrice (number)',
-          };
-          return NextResponse.json(response, { status: 400 });
-        }
+            error: 'Client not found',
+          },
+          { status: 404 }
+        );
       }
+      client = newClient;
     }
 
-    if (updateData.status) {
-      const validStatuses = ['draft', 'sent', 'paid', 'overdue', 'cancelled'];
-      if (!validStatuses.includes(updateData.status)) {
-        const response: UpdateInvoiceResponse = {
-          success: false,
-          error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`,
-        };
-        return NextResponse.json(response, { status: 400 });
-      }
+    // Calculate new items if provided
+    let items = existingInvoice.items;
+    let subtotal = existingInvoice.subtotal;
+    let taxAmount = existingInvoice.taxAmount;
+    let discountAmount = existingInvoice.discountAmount;
+    let discountPercent = existingInvoice.discountPercent;
+    let total = existingInvoice.total;
+
+    if (body.items) {
+      items = body.items.map((item, index) => ({
+        id: `item-${Date.now()}-${index}`,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        taxRate: item.taxRate,
+        total: calculateItemTotal(item.quantity, item.unitPrice, item.taxRate),
+      }));
+
+      subtotal = calculateSubtotal(items);
+      taxAmount = calculateTax(items);
     }
 
-    const updatedInvoice = storageService.updateInvoice(id, updateData);
-
-    if (!updatedInvoice) {
-      const response: UpdateInvoiceResponse = {
-        success: false,
-        error: 'Invoice not found',
-      };
-      return NextResponse.json(response, { status: 404 });
+    // Recalculate discount if changed
+    if (body.discountPercent !== undefined) {
+      discountPercent = body.discountPercent;
+      discountAmount = calculateDiscount(subtotal, discountPercent);
+    } else if (body.discountAmount !== undefined) {
+      discountAmount = body.discountAmount;
+      discountPercent = 0;
     }
 
-    const response: UpdateInvoiceResponse = {
+    // Recalculate total
+    total = calculateTotal(subtotal, taxAmount, discountAmount);
+
+    // Update invoice
+    const updatedInvoice: Invoice = {
+      ...existingInvoice,
+      clientId: body.clientId || existingInvoice.clientId,
+      client,
+      items,
+      subtotal,
+      taxAmount,
+      discountAmount,
+      discountPercent,
+      total,
+      issueDate: body.issueDate || existingInvoice.issueDate,
+      dueDate: body.dueDate || existingInvoice.dueDate,
+      notes: body.notes !== undefined ? body.notes : existingInvoice.notes,
+      status: body.status || existingInvoice.status,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Handle status changes
+    if (body.status === 'paid' && !existingInvoice.paidAt) {
+      updatedInvoice.paidAt = new Date().toISOString();
+    }
+
+    storage.updateInvoice(id, updatedInvoice);
+
+    return NextResponse.json({
       success: true,
       invoice: updatedInvoice,
-    };
-
-    return NextResponse.json(response, { status: 200 });
+    });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Failed to update invoice';
-    
-    const response: UpdateInvoiceResponse = {
-      success: false,
-      error: errorMessage,
-    };
-
-    return NextResponse.json(response, { status: 500 });
+    console.error('Error updating invoice:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to update invoice',
+      },
+      { status: 500 }
+    );
   }
 }
 
 export async function DELETE(_request : NextRequest,
   { params }: { params: { id: string } }
-) {
+): Promise<NextResponse<DeleteInvoiceResponse>> {
   try {
     const { id } = params;
 
-    if (!id) {
-      const response: DeleteInvoiceResponse = {
-        success: false,
-        error: 'Invoice ID is required',
-      };
-      return NextResponse.json(response, { status: 400 });
+    const existingInvoice = storage.getInvoice(id);
+
+    if (!existingInvoice) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invoice not found',
+        },
+        { status: 404 }
+      );
     }
 
-    const deleted = storageService.deleteInvoice(id);
+    storage.deleteInvoice(id);
 
-    if (!deleted) {
-      const response: DeleteInvoiceResponse = {
-        success: false,
-        error: 'Invoice not found',
-      };
-      return NextResponse.json(response, { status: 404 });
-    }
-
-    const response: DeleteInvoiceResponse = {
+    return NextResponse.json({
       success: true,
-    };
-
-    return NextResponse.json(response, { status: 200 });
+    });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Failed to delete invoice';
-    
-    const response: DeleteInvoiceResponse = {
-      success: false,
-      error: errorMessage,
-    };
-
-    return NextResponse.json(response, { status: 500 });
+    console.error('Error deleting invoice:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to delete invoice',
+      },
+      { status: 500 }
+    );
   }
 }

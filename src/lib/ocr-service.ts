@@ -1,37 +1,82 @@
-import pdf from 'pdf-parse';
 import { ExtractedPDFData } from '@/types';
 
 /**
- * Extract text and data from PDF buffer using pdf-parse library
+ * Perform OCR on PDF buffer using external OCR API
+ * This is a fallback when pdf-parse fails (e.g., scanned PDFs)
  * @param buffer PDF file buffer
- * @returns Extracted PDF data with structured information
+ * @returns OCR result with extracted text and confidence
  */
-export async function extractPDFData(buffer: Buffer): Promise<ExtractedPDFData> {
+export async function performOCR(buffer: Buffer): Promise<{
+  text: string;
+  confidence: number;
+}> {
+  const ocrApiKey = process.env.OCR_API_KEY;
+  const ocrApiUrl = process.env.OCR_API_URL;
+  
+  if (!ocrApiKey || !ocrApiUrl) {
+    throw new Error('OCR API credentials not configured. Set OCR_API_KEY and OCR_API_URL environment variables.');
+  }
+  
   try {
-    const data = await pdf(buffer);
+    // Convert buffer to base64 for API transmission
+    const base64Data = buffer.toString('base64');
     
-    const rawText = data.text;
-    const normalizedData = normalizePDFData(rawText);
+    // Call OCR API (example using OCR.space API format)
+    const formData = new FormData();
+    const blob = new Blob([buffer], { type: 'application/pdf' });
+    formData.append('file', blob, 'invoice.pdf');
+    formData.append('apikey', ocrApiKey);
+    formData.append('language', 'eng');
+    formData.append('isOverlayRequired', 'false');
+    formData.append('detectOrientation', 'true');
+    formData.append('scale', 'true');
+    formData.append('OCREngine', '2'); // Use OCR Engine 2 for better accuracy
+    
+    const response = await fetch(ocrApiUrl, {
+      method: 'POST',
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`OCR API request failed: ${response.status} ${response.statusText}`);
+    }
+    
+    const result = await response.json();
+    
+    // Parse OCR.space API response format
+    if (result.IsErroredOnProcessing) {
+      throw new Error(`OCR processing error: ${result.ErrorMessage || 'Unknown error'}`);
+    }
+    
+    if (!result.ParsedResults || result.ParsedResults.length === 0) {
+      throw new Error('No text extracted from PDF');
+    }
+    
+    const parsedText = result.ParsedResults[0].ParsedText || '';
+    const confidence = result.ParsedResults[0].TextOverlay?.Lines?.reduce(
+      (acc: number, line: any) => acc + (line.MaxConfidence || 0),
+      0
+    ) / (result.ParsedResults[0].TextOverlay?.Lines?.length || 1) / 100;
     
     return {
-      ...normalizedData,
-      rawText,
-      confidence: 0.85, // pdf-parse has high confidence for digital PDFs
+      text: parsedText,
+      confidence: confidence || 0.5, // default to 0.5 if confidence not available
     };
   } catch (error) {
-    console.error('PDF parsing error:', error);
-    throw new Error('Failed to extract data from PDF. The file might be corrupted or scanned.');
+    console.error('OCR API error:', error);
+    throw new Error(`OCR processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 /**
- * Normalize extracted PDF text into structured invoice data
- * Uses regex patterns to extract invoice fields
- * @param text Raw text extracted from PDF
+ * Extract structured invoice data from OCR text
+ * Uses same normalization logic as PDF parser
+ * @param ocrText Raw text from OCR
+ * @param confidence OCR confidence score
  * @returns Structured invoice data
  */
-export function normalizePDFData(text: string): Omit<ExtractedPDFData, 'rawText' | 'confidence'> {
-  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+export function extractDataFromOCR(ocrText: string, confidence: number): ExtractedPDFData {
+  const lines = ocrText.split('\n').map(line => line.trim()).filter(Boolean);
   
   // Extract invoice number
   const invoiceNumber = extractInvoiceNumber(lines);
@@ -49,7 +94,7 @@ export function normalizePDFData(text: string): Omit<ExtractedPDFData, 'rawText'
   const financials = extractFinancials(lines);
   
   // Extract currency
-  const currency = extractCurrency(text);
+  const currency = extractCurrency(ocrText);
   
   return {
     invoiceNumber,
@@ -63,12 +108,13 @@ export function normalizePDFData(text: string): Omit<ExtractedPDFData, 'rawText'
     taxAmount: financials.taxAmount,
     total: financials.total,
     currency,
+    rawText: ocrText,
+    confidence,
   };
 }
 
 /**
  * Extract invoice number from text lines
- * Looks for patterns like "Invoice #", "Invoice No:", "INV-", etc.
  */
 function extractInvoiceNumber(lines: string[]): string | undefined {
   const patterns = [
@@ -77,6 +123,7 @@ function extractInvoiceNumber(lines: string[]): string | undefined {
     /inv\s*[-#]?\s*([A-Z0-9-]+)/i,
     /^(INV-\d+)$/i,
     /bill\s*#?\s*:?\s*([A-Z0-9-]+)/i,
+    /no\s*\.?\s*:?\s*([A-Z0-9-]+)/i,
   ];
   
   for (const line of lines) {
@@ -92,7 +139,7 @@ function extractInvoiceNumber(lines: string[]): string | undefined {
 }
 
 /**
- * Extract client information (name, email, address)
+ * Extract client information
  */
 function extractClientInfo(lines: string[]): {
   name?: string;
@@ -103,15 +150,14 @@ function extractClientInfo(lines: string[]): {
   let email: string | undefined;
   let address: string | undefined;
   
-  // Look for email pattern
   const emailPattern = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/;
   
-  // Look for "Bill To:", "Client:", "Customer:" sections
   const clientSectionPatterns = [
     /bill\s+to\s*:?/i,
     /client\s*:?/i,
     /customer\s*:?/i,
     /billed\s+to\s*:?/i,
+    /to\s*:?/i,
   ];
   
   let inClientSection = false;
@@ -120,12 +166,10 @@ function extractClientInfo(lines: string[]): {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     
-    // Check if we're entering a client section
     if (!inClientSection) {
       for (const pattern of clientSectionPatterns) {
         if (pattern.test(line)) {
           inClientSection = true;
-          // Check if name is on same line
           const afterPattern = line.replace(pattern, '').trim();
           if (afterPattern && afterPattern.length > 2) {
             clientSectionLines.push(afterPattern);
@@ -134,11 +178,10 @@ function extractClientInfo(lines: string[]): {
         }
       }
     } else {
-      // We're in client section, collect lines until we hit a separator or new section
       if (
-        line.match(/^[-=_]{3,}$/) || // separator line
-        line.match(/^(description|item|quantity|amount|date|total)/i) || // table headers
-        clientSectionLines.length >= 5 // max 5 lines for client info
+        line.match(/^[-=_]{3,}$/) ||
+        line.match(/^(description|item|quantity|amount|date|total|from|invoice)/i) ||
+        clientSectionLines.length >= 5
       ) {
         inClientSection = false;
         break;
@@ -146,31 +189,25 @@ function extractClientInfo(lines: string[]): {
       clientSectionLines.push(line);
     }
     
-    // Extract email from any line
     const emailMatch = line.match(emailPattern);
     if (emailMatch && !email) {
       email = emailMatch[1];
     }
   }
   
-  // Process collected client section lines
   if (clientSectionLines.length > 0) {
-    // First non-empty line is usually the name
     name = clientSectionLines[0];
-    
-    // Remaining lines form the address
     const addressLines = clientSectionLines.slice(1).filter(l => !emailPattern.test(l));
     if (addressLines.length > 0) {
       address = addressLines.join(', ');
     }
   }
   
-  // Fallback: if no name found, look for lines before email
   if (!name && email) {
     const emailLineIndex = lines.findIndex(l => l.includes(email));
     if (emailLineIndex > 0) {
       const potentialName = lines[emailLineIndex - 1];
-      if (potentialName && potentialName.length > 2 && !potentialName.match(/^(invoice|bill|date|total)/i)) {
+      if (potentialName && potentialName.length > 2 && !potentialName.match(/^(invoice|bill|date|total|from)/i)) {
         name = potentialName;
       }
     }
@@ -180,7 +217,7 @@ function extractClientInfo(lines: string[]): {
 }
 
 /**
- * Extract issue date and due date
+ * Extract dates
  */
 function extractDates(lines: string[]): {
   issueDate?: string;
@@ -189,24 +226,24 @@ function extractDates(lines: string[]): {
   let issueDate: string | undefined;
   let dueDate: string | undefined;
   
-  // Date patterns: MM/DD/YYYY, DD/MM/YYYY, YYYY-MM-DD, Month DD, YYYY
-  const datePattern = /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4})/i;
+  const datePattern = /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4})/i;
   
   const issueDatePatterns = [
     /invoice\s+date\s*:?\s*/i,
     /issue\s+date\s*:?\s*/i,
     /date\s*:?\s*/i,
     /dated\s*:?\s*/i,
+    /created\s*:?\s*/i,
   ];
   
   const dueDatePatterns = [
     /due\s+date\s*:?\s*/i,
     /payment\s+due\s*:?\s*/i,
     /due\s*:?\s*/i,
+    /pay\s+by\s*:?\s*/i,
   ];
   
   for (const line of lines) {
-    // Check for issue date
     if (!issueDate) {
       for (const pattern of issueDatePatterns) {
         if (pattern.test(line)) {
@@ -219,7 +256,6 @@ function extractDates(lines: string[]): {
       }
     }
     
-    // Check for due date
     if (!dueDate) {
       for (const pattern of dueDatePatterns) {
         if (pattern.test(line)) {
@@ -243,18 +279,20 @@ function extractDates(lines: string[]): {
  */
 function normalizeDate(dateStr: string): string {
   try {
-    const date = new Date(dateStr);
+    // Replace dots with slashes for better parsing
+    const normalized = dateStr.replace(/\./g, '/');
+    const date = new Date(normalized);
     if (!isNaN(date.getTime())) {
       return date.toISOString();
     }
   } catch (error) {
     console.error('Date parsing error:', error);
   }
-  return dateStr; // return original if parsing fails
+  return dateStr;
 }
 
 /**
- * Extract line items from invoice table
+ * Extract line items
  */
 function extractLineItems(lines: string[]): Array<{
   description: string;
@@ -263,11 +301,12 @@ function extractLineItems(lines: string[]): Array<{
 }> {
   const items: Array<{ description: string; quantity: number; unitPrice: number }> = [];
   
-  // Find table start (look for headers like Description, Quantity, Price, Amount)
   const headerPatterns = [
     /description.*quantity.*price/i,
     /item.*qty.*rate/i,
     /description.*amount/i,
+    /product.*quantity.*price/i,
+    /service.*qty.*rate/i,
   ];
   
   let tableStartIndex = -1;
@@ -281,38 +320,35 @@ function extractLineItems(lines: string[]): Array<{
   
   if (tableStartIndex === -1) return items;
   
-  // Extract items until we hit totals section
-  const totalPatterns = /^(subtotal|total|tax|discount|amount\s+due)/i;
+  const totalPatterns = /^(subtotal|sub\s*total|total|tax|vat|discount|amount\s+due|balance)/i;
   
   for (let i = tableStartIndex; i < lines.length; i++) {
     const line = lines[i];
     
-    // Stop at totals section
     if (totalPatterns.test(line)) break;
-    
-    // Skip separator lines
     if (line.match(/^[-=_]{3,}$/)) continue;
+    if (line.length < 3) continue;
     
-    // Try to extract item data
-    // Pattern: description ... quantity ... price ... total
-    const numberPattern = /(\d+(?:\.\d+)?)/g;
-    const numbers = Array.from(line.matchAll(numberPattern)).map(m => parseFloat(m[1]));
+    const numberPattern = /(\d+(?:[.,]\d+)?)/g;
+    const numbers = Array.from(line.matchAll(numberPattern)).map(m => 
+      parseFloat(m[1].replace(/,/g, '.'))
+    );
     
     if (numbers.length >= 2) {
-      // Extract description (text before first number)
       const firstNumberIndex = line.search(/\d/);
       const description = line.substring(0, firstNumberIndex).trim();
       
-      if (description && description.length > 1) {
-        // Assume: quantity is first number, unit price is second number
+      if (description && description.length > 1 && !description.match(/^(page|\d+)$/i)) {
         const quantity = numbers[0];
         const unitPrice = numbers[1];
         
-        items.push({
-          description,
-          quantity,
-          unitPrice,
-        });
+        if (quantity > 0 && unitPrice > 0) {
+          items.push({
+            description,
+            quantity,
+            unitPrice,
+          });
+        }
       }
     }
   }
@@ -321,7 +357,7 @@ function extractLineItems(lines: string[]): Array<{
 }
 
 /**
- * Extract financial totals (subtotal, tax, total)
+ * Extract financial totals
  */
 function extractFinancials(lines: string[]): {
   subtotal?: number;
@@ -332,33 +368,36 @@ function extractFinancials(lines: string[]): {
   let taxAmount: number | undefined;
   let total: number | undefined;
   
-  const currencyPattern = /[\$€£¥]?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/;
+  const currencyPattern = /[\$€£¥₹]?\s*(\d+(?:[.,]\d{3})*(?:[.,]\d{2})?)/;
   
   for (const line of lines) {
     const lowerLine = line.toLowerCase();
     
-    // Extract subtotal
-    if (!subtotal && (lowerLine.includes('subtotal') || lowerLine.includes('sub total'))) {
+    if (!subtotal && (lowerLine.includes('subtotal') || lowerLine.includes('sub total') || lowerLine.includes('sub-total'))) {
       const match = line.match(currencyPattern);
       if (match) {
         subtotal = parseFloat(match[1].replace(/,/g, ''));
       }
     }
     
-    // Extract tax
-    if (!taxAmount && (lowerLine.includes('tax') || lowerLine.includes('vat') || lowerLine.includes('gst'))) {
+    if (!taxAmount && (
+      lowerLine.includes('tax') || 
+      lowerLine.includes('vat') || 
+      lowerLine.includes('gst') ||
+      lowerLine.includes('sales tax')
+    )) {
       const match = line.match(currencyPattern);
       if (match) {
         taxAmount = parseFloat(match[1].replace(/,/g, ''));
       }
     }
     
-    // Extract total (look for "Total", "Amount Due", "Balance Due")
     if (!total && (
       lowerLine.match(/^total\s*:?\s*/i) ||
       lowerLine.includes('amount due') ||
       lowerLine.includes('balance due') ||
-      lowerLine.includes('total amount')
+      lowerLine.includes('total amount') ||
+      lowerLine.includes('grand total')
     )) {
       const match = line.match(currencyPattern);
       if (match) {
@@ -371,7 +410,7 @@ function extractFinancials(lines: string[]): {
 }
 
 /**
- * Extract currency from text
+ * Extract currency
  */
 function extractCurrency(text: string): string {
   const currencySymbols: Record<string, string> = {
@@ -380,21 +419,21 @@ function extractCurrency(text: string): string {
     '£': 'GBP',
     '¥': 'JPY',
     '₹': 'INR',
+    'C$': 'CAD',
+    'A$': 'AUD',
   };
   
-  // Check for currency symbols
   for (const [symbol, code] of Object.entries(currencySymbols)) {
     if (text.includes(symbol)) {
       return code;
     }
   }
   
-  // Check for currency codes (USD, EUR, GBP, etc.)
-  const currencyCodePattern = /\b(USD|EUR|GBP|JPY|INR|CAD|AUD|CHF|CNY)\b/i;
+  const currencyCodePattern = /\b(USD|EUR|GBP|JPY|INR|CAD|AUD|CHF|CNY|SGD|HKD|NZD|SEK|NOK|DKK)\b/i;
   const match = text.match(currencyCodePattern);
   if (match) {
     return match[1].toUpperCase();
   }
   
-  return 'USD'; // default
+  return 'USD';
 }

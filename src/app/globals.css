@@ -10,7 +10,7 @@
     --card-foreground: 222.2 84% 4.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
+    --primary: 222.2 47.4% 11.2%;
     --primary-foreground: 210 40% 98%;
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
@@ -22,30 +22,8 @@
     --destructive-foreground: 210 40% 98%;
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
+    --ring: 222.2 84% 4.9%;
     --radius: 0.5rem;
-  }
-
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
   }
 }
 
@@ -55,7 +33,52 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer components {
+  .invoice-table {
+    @apply w-full border-collapse;
+  }
+  
+  .invoice-table th {
+    @apply bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-200;
+  }
+  
+  .invoice-table td {
+    @apply px-4 py-3 text-sm text-gray-900 border-b border-gray-200;
+  }
+  
+  .invoice-table tbody tr:hover {
+    @apply bg-gray-50;
+  }
+  
+  .btn-primary {
+    @apply inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .btn-secondary {
+    @apply inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .btn-danger {
+    @apply inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .input-field {
+    @apply block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm;
+  }
+  
+  .label-field {
+    @apply block text-sm font-medium text-gray-700 mb-1;
+  }
+  
+  .card {
+    @apply bg-white rounded-lg shadow-sm border border-gray-200 p-6;
+  }
+  
+  .status-badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
   }
 }
 
@@ -63,229 +86,4 @@
   .text-balance {
     text-wrap: balance;
   }
-}
-
-/* Custom scrollbar styles */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  @apply bg-secondary;
-}
-
-::-webkit-scrollbar-thumb {
-  @apply bg-muted-foreground/30 rounded-md;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-muted-foreground/50;
-}
-
-/* Animation utilities */
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-@keyframes bounce {
-  0%, 100% {
-    transform: translateY(-25%);
-    animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
-  }
-  50% {
-    transform: translateY(0);
-    animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
-  }
-}
-
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-
-.animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-.animate-bounce {
-  animation: bounce 1s infinite;
-}
-
-/* Print styles for invoice preview */
-@media print {
-  body {
-    @apply bg-white text-black;
-  }
-  
-  .no-print {
-    display: none !important;
-  }
-  
-  .print-full-width {
-    width: 100% !important;
-    max-width: none !important;
-  }
-}
-
-/* Drag and drop styles */
-.drag-active {
-  @apply border-primary bg-primary/5;
-}
-
-.drag-reject {
-  @apply border-destructive bg-destructive/5;
-}
-
-/* Form validation styles */
-.input-error {
-  @apply border-destructive focus:ring-destructive;
-}
-
-.error-message {
-  @apply text-destructive text-sm mt-1;
-}
-
-/* Table styles */
-.table-hover tbody tr {
-  @apply transition-colors hover:bg-muted/50 cursor-pointer;
-}
-
-/* Modal backdrop */
-.modal-backdrop {
-  @apply fixed inset-0 bg-black/50 backdrop-blur-sm z-40;
-}
-
-/* Toast notification styles */
-.toast-success {
-  @apply bg-green-500 text-white;
-}
-
-.toast-error {
-  @apply bg-destructive text-destructive-foreground;
-}
-
-.toast-warning {
-  @apply bg-yellow-500 text-white;
-}
-
-.toast-info {
-  @apply bg-primary text-primary-foreground;
-}
-
-/* Loading skeleton */
-.skeleton {
-  @apply animate-pulse bg-muted rounded;
-}
-
-/* Badge variants */
-.badge-draft {
-  @apply bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100;
-}
-
-.badge-sent {
-  @apply bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100;
-}
-
-.badge-paid {
-  @apply bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100;
-}
-
-.badge-overdue {
-  @apply bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100;
-}
-
-.badge-cancelled {
-  @apply bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100;
-}
-
-/* Focus visible styles for accessibility */
-.focus-visible-ring {
-  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
-}
-
-/* Transition utilities */
-.transition-base {
-  @apply transition-all duration-200 ease-in-out;
-}
-
-/* Card hover effect */
-.card-hover {
-  @apply transition-base hover:shadow-lg hover:-translate-y-1;
-}
-
-/* Button loading state */
-.btn-loading {
-  @apply relative text-transparent pointer-events-none;
-}
-
-.btn-loading::after {
-  content: '';
-  @apply absolute inset-0 flex items-center justify-center;
-  animation: spin 1s linear infinite;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  width: 1rem;
-  height: 1rem;
-  margin: auto;
-}
-
-/* Grid layout utilities */
-.grid-auto-fit {
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-}
-
-.grid-auto-fill {
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-}
-
-/* Text truncate utilities */
-.truncate-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.truncate-3 {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* Status indicator dot */
-.status-dot {
-  @apply inline-block w-2 h-2 rounded-full mr-2;
-}
-
-.status-dot-draft {
-  @apply bg-gray-400;
-}
-
-.status-dot-sent {
-  @apply bg-blue-500;
-}
-
-.status-dot-paid {
-  @apply bg-green-500;
-}
-
-.status-dot-overdue {
-  @apply bg-red-500;
-}
-
-.status-dot-cancelled {
-  @apply bg-gray-400;
 }

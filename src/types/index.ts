@@ -1,39 +1,55 @@
-// src/types/index.ts - Complete TypeScript definitions for the entire project
+// src/types/index.ts - Complete TypeScript definitions for AutoInvoice Pro
 
 // ============================================================================
 // CORE DATA MODELS
 // ============================================================================
 
-export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
+export interface Client {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  address?: string;
+  taxId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface InvoiceItem {
   id: string;
   description: string;
   quantity: number;
   unitPrice: number;
-  total: number;
+  taxRate: number; // percentage (e.g., 20 for 20%)
+  total: number; // calculated: quantity * unitPrice * (1 + taxRate/100)
 }
+
+export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
 
 export interface Invoice {
   id: string;
-  invoiceNumber: string;
-  clientName: string;
-  clientEmail: string;
-  clientAddress?: string;
+  invoiceNumber: string; // e.g., "INV-2024-001"
+  clientId: string;
+  client: Client; // populated client data
+  items: InvoiceItem[];
+  subtotal: number; // sum of all items before tax
+  taxAmount: number; // total tax
+  discountAmount: number; // flat discount
+  discountPercent: number; // percentage discount
+  total: number; // final amount
+  currency: string; // e.g., "USD", "EUR"
+  status: InvoiceStatus;
   issueDate: string; // ISO date string
   dueDate: string; // ISO date string
-  items: InvoiceItem[];
-  subtotal: number;
-  taxRate: number; // percentage (e.g., 20 for 20%)
-  taxAmount: number;
-  total: number;
-  status: InvoiceStatus;
   notes?: string;
-  createdAt: string; // ISO date string
-  updatedAt: string; // ISO date string
+  pdfUrl?: string; // URL to generated PDF
+  sentAt?: string; // ISO date string when email was sent
+  paidAt?: string; // ISO date string when marked as paid
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface ExtractedData {
+export interface ExtractedPDFData {
   invoiceNumber?: string;
   clientName?: string;
   clientEmail?: string;
@@ -46,31 +62,33 @@ export interface ExtractedData {
     unitPrice: number;
   }>;
   subtotal?: number;
-  taxRate?: number;
+  taxAmount?: number;
   total?: number;
-  rawText: string; // Full extracted text for debugging
-  confidence: number; // OCR confidence score 0-1
+  currency?: string;
+  rawText: string; // full extracted text for debugging
+  confidence: number; // 0-1, OCR confidence score
 }
 
 // ============================================================================
 // API REQUEST/RESPONSE TYPES
 // ============================================================================
 
-// Invoice CRUD
+// Invoices API
 export interface CreateInvoiceRequest {
-  invoiceNumber: string;
-  clientName: string;
-  clientEmail: string;
-  clientAddress?: string;
-  issueDate: string;
-  dueDate: string;
+  clientId: string;
   items: Array<{
     description: string;
     quantity: number;
     unitPrice: number;
+    taxRate: number;
   }>;
-  taxRate: number;
+  discountAmount?: number;
+  discountPercent?: number;
+  currency?: string;
+  issueDate: string;
+  dueDate: string;
   notes?: string;
+  status?: InvoiceStatus;
 }
 
 export interface CreateInvoiceResponse {
@@ -79,7 +97,19 @@ export interface CreateInvoiceResponse {
   error?: string;
 }
 
-export interface UpdateInvoiceRequest extends Partial<CreateInvoiceRequest> {
+export interface UpdateInvoiceRequest {
+  clientId?: string;
+  items?: Array<{
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    taxRate: number;
+  }>;
+  discountAmount?: number;
+  discountPercent?: number;
+  issueDate?: string;
+  dueDate?: string;
+  notes?: string;
   status?: InvoiceStatus;
 }
 
@@ -89,9 +119,10 @@ export interface UpdateInvoiceResponse {
   error?: string;
 }
 
-export interface InvoiceListResponse {
+export interface GetInvoicesResponse {
   success: boolean;
   invoices: Invoice[];
+  total: number;
   error?: string;
 }
 
@@ -106,28 +137,90 @@ export interface DeleteInvoiceResponse {
   error?: string;
 }
 
-// PDF Extraction
-export interface ExtractPDFRequest {
-  file: File;
+// Clients API
+export interface CreateClientRequest {
+  name: string;
+  email: string;
+  phone?: string;
+  address?: string;
+  taxId?: string;
 }
 
-export interface ExtractPDFResponse {
+export interface CreateClientResponse {
   success: boolean;
-  data?: ExtractedData;
+  client?: Client;
   error?: string;
 }
 
-// Email Sending
+export interface UpdateClientRequest {
+  name?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  taxId?: string;
+}
+
+export interface UpdateClientResponse {
+  success: boolean;
+  client?: Client;
+  error?: string;
+}
+
+export interface GetClientsResponse {
+  success: boolean;
+  clients: Client[];
+  error?: string;
+}
+
+export interface GetClientResponse {
+  success: boolean;
+  client?: Client;
+  error?: string;
+}
+
+export interface DeleteClientResponse {
+  success: boolean;
+  error?: string;
+}
+
+// PDF Upload API
+export interface UploadPDFRequest {
+  file: File;
+}
+
+export interface UploadPDFResponse {
+  success: boolean;
+  data?: ExtractedPDFData;
+  error?: string;
+}
+
+// Send Invoice API
 export interface SendInvoiceRequest {
   invoiceId: string;
-  recipientEmail?: string; // Override invoice clientEmail if provided
+  recipientEmail?: string; // override client email
   subject?: string;
   message?: string;
 }
 
 export interface SendInvoiceResponse {
   success: boolean;
-  sentAt?: string; // ISO date string
+  sentAt?: string;
+  error?: string;
+}
+
+// Stats API
+export interface DashboardStats {
+  totalInvoices: number;
+  totalRevenue: number;
+  pendingInvoices: number;
+  paidInvoices: number;
+  overdueInvoices: number;
+  recentInvoices: Invoice[];
+}
+
+export interface GetStatsResponse {
+  success: boolean;
+  stats?: DashboardStats;
   error?: string;
 }
 
@@ -135,188 +228,157 @@ export interface SendInvoiceResponse {
 // COMPONENT PROPS
 // ============================================================================
 
-export interface InvoiceUploadProps {
-  onUploadComplete: (extractedData: ExtractedData) => void;
-  onError: (error: string) => void;
+export interface InvoiceListProps {
+  invoices: Invoice[];
+  onEdit?: (invoice: Invoice) => void;
+  onDelete?: (invoiceId: string) => void;
+  onSend?: (invoiceId: string) => void;
+  loading?: boolean;
 }
 
 export interface InvoiceFormProps {
-  initialData?: Partial<Invoice>;
-  onSubmit: (data: CreateInvoiceRequest) => Promise<void>;
-  onCancel: () => void;
-  isLoading?: boolean;
+  invoice?: Invoice; // for edit mode
+  clients: Client[];
+  onSubmit: (data: CreateInvoiceRequest | UpdateInvoiceRequest) => Promise<void>;
+  onCancel?: () => void;
+  loading?: boolean;
 }
 
-export interface InvoiceListProps {
-  invoices: Invoice[];
-  onView: (invoice: Invoice) => void;
-  onEdit: (invoice: Invoice) => void;
-  onDelete: (invoiceId: string) => void;
-  onSend: (invoiceId: string) => void;
-  isLoading?: boolean;
+export interface PDFUploaderProps {
+  onUploadComplete: (data: ExtractedPDFData) => void;
+  onError?: (error: string) => void;
+  maxSizeMB?: number;
+}
+
+export interface ClientSelectorProps {
+  clients: Client[];
+  selectedClientId?: string;
+  onSelect: (clientId: string) => void;
+  onCreateNew?: () => void;
+  loading?: boolean;
 }
 
 export interface InvoicePreviewProps {
   invoice: Invoice;
-  isOpen: boolean;
-  onClose: () => void;
+  onEdit?: () => void;
   onSend?: () => void;
   onDownload?: () => void;
 }
 
-export interface ExtractedDataReviewProps {
-  data: ExtractedData;
-  onConfirm: (confirmedData: CreateInvoiceRequest) => void;
-  onCancel: () => void;
-  isOpen: boolean;
+export interface StatsCardProps {
+  title: string;
+  value: string | number;
+  icon?: React.ReactNode;
+  trend?: {
+    value: number;
+    isPositive: boolean;
+  };
+  loading?: boolean;
 }
 
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
-  size?: 'sm' | 'md' | 'lg';
-  isLoading?: boolean;
-  leftIcon?: React.ReactNode;
-  rightIcon?: React.ReactNode;
-}
-
-export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
-  label?: string;
-  error?: string;
-  helperText?: string;
-  leftIcon?: React.ReactNode;
-  rightIcon?: React.ReactNode;
-}
-
-export interface ModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  title?: string;
-  children: React.ReactNode;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
-  showCloseButton?: boolean;
-}
-
-export interface BadgeProps {
+export interface StatusBadgeProps {
   status: InvoiceStatus;
-  size?: 'sm' | 'md';
-}
-
-export interface LoadingSpinnerProps {
   size?: 'sm' | 'md' | 'lg';
-  color?: string;
 }
 
 // ============================================================================
-// UTILITY FUNCTION TYPES
+// UTILITY TYPES
 // ============================================================================
 
-// Storage Service
+export interface InvoiceCalculations {
+  calculateSubtotal: (items: InvoiceItem[]) => number;
+  calculateTax: (items: InvoiceItem[]) => number;
+  calculateTotal: (subtotal: number, taxAmount: number, discountAmount: number) => number;
+  calculateDiscount: (subtotal: number, discountPercent: number) => number;
+  calculateItemTotal: (quantity: number, unitPrice: number, taxRate: number) => number;
+}
+
 export interface StorageService {
   getInvoices: () => Invoice[];
   getInvoice: (id: string) => Invoice | null;
-  createInvoice: (data: CreateInvoiceRequest) => Invoice;
-  updateInvoice: (id: string, data: UpdateInvoiceRequest) => Invoice | null;
-  deleteInvoice: (id: string) => boolean;
-  generateInvoiceNumber: () => string;
+  saveInvoice: (invoice: Invoice) => void;
+  updateInvoice: (id: string, updates: Partial<Invoice>) => void;
+  deleteInvoice: (id: string) => void;
+  getClients: () => Client[];
+  getClient: (id: string) => Client | null;
+  saveClient: (client: Client) => void;
+  updateClient: (id: string, updates: Partial<Client>) => void;
+  deleteClient: (id: string) => void;
+  clear: () => void;
 }
 
-// Calculations
-export interface InvoiceCalculations {
-  subtotal: number;
-  taxAmount: number;
-  total: number;
+export interface PDFParserResult {
+  text: string;
+  numPages: number;
+  metadata?: Record<string, any>;
 }
 
-export type CalculateInvoiceTotals = (
-  items: Array<{ quantity: number; unitPrice: number }>,
-  taxRate: number
-) => InvoiceCalculations;
-
-export type CalculateLineTotal = (quantity: number, unitPrice: number) => number;
-
-// PDF Parser
-export type ExtractTextFromPDF = (file: File) => Promise<string>;
-
-export type ParseInvoiceData = (text: string) => Partial<ExtractedData>;
-
-// OCR
-export type PerformOCR = (file: File) => Promise<{
+export interface OCRResult {
   text: string;
   confidence: number;
-}>;
+  blocks: Array<{
+    text: string;
+    confidence: number;
+    boundingBox: { x: number; y: number; width: number; height: number };
+  }>;
+}
 
-// Email
-export interface EmailOptions {
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer | string;
+  contentType: string;
+}
+
+export interface SendEmailOptions {
   to: string;
   subject: string;
   html: string;
-  attachments?: Array<{
-    filename: string;
-    content: string | Buffer;
-  }>;
-}
-
-export type SendInvoiceEmail = (
-  invoice: Invoice,
-  options?: Partial<EmailOptions>
-) => Promise<{ success: boolean; error?: string }>;
-
-// ============================================================================
-// HOOK RETURN TYPES
-// ============================================================================
-
-export interface UseInvoicesReturn {
-  invoices: Invoice[];
-  isLoading: boolean;
-  error: string | null;
-  createInvoice: (data: CreateInvoiceRequest) => Promise<Invoice | null>;
-  updateInvoice: (id: string, data: UpdateInvoiceRequest) => Promise<Invoice | null>;
-  deleteInvoice: (id: string) => Promise<boolean>;
-  sendInvoice: (id: string, options?: Partial<SendInvoiceRequest>) => Promise<boolean>;
-  refreshInvoices: () => Promise<void>;
-}
-
-export interface UseFileUploadReturn {
-  uploadFile: (file: File) => Promise<ExtractedData | null>;
-  isUploading: boolean;
-  progress: number;
-  error: string | null;
-  reset: () => void;
+  attachments?: EmailAttachment[];
 }
 
 // ============================================================================
-// FORM DATA TYPES
+// FILTER & SEARCH TYPES
 // ============================================================================
 
-export interface InvoiceFormData {
-  invoiceNumber: string;
-  clientName: string;
-  clientEmail: string;
-  clientAddress: string;
-  issueDate: string;
-  dueDate: string;
-  items: Array<{
-    id: string;
-    description: string;
-    quantity: string; // String for form input
-    unitPrice: string; // String for form input
-  }>;
-  taxRate: string; // String for form input
-  notes: string;
+export interface InvoiceFilters {
+  status?: InvoiceStatus[];
+  clientId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  minAmount?: number;
+  maxAmount?: number;
+  search?: string; // search in invoice number, client name
 }
 
-export interface InvoiceFormErrors {
-  invoiceNumber?: string;
-  clientName?: string;
-  clientEmail?: string;
-  issueDate?: string;
-  dueDate?: string;
-  items?: Array<{
-    description?: string;
-    quantity?: string;
-    unitPrice?: string;
-  }>;
-  taxRate?: string;
+export interface PaginationParams {
+  page: number;
+  limit: number;
+  sortBy?: 'createdAt' | 'dueDate' | 'total' | 'invoiceNumber';
+  sortOrder?: 'asc' | 'desc';
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+// ============================================================================
+// FORM VALIDATION TYPES
+// ============================================================================
+
+export interface ValidationError {
+  field: string;
+  message: string;
+}
+
+export interface FormState<T> {
+  data: T;
+  errors: ValidationError[];
+  isValid: boolean;
+  isDirty: boolean;
 }
 
 // ============================================================================
@@ -332,9 +394,14 @@ export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
 };
 
 export const INVOICE_STATUS_COLORS: Record<InvoiceStatus, string> = {
-  draft: 'gray',
-  sent: 'blue',
-  paid: 'green',
-  overdue: 'red',
-  cancelled: 'gray',
+  draft: 'bg-gray-100 text-gray-800',
+  sent: 'bg-blue-100 text-blue-800',
+  paid: 'bg-green-100 text-green-800',
+  overdue: 'bg-red-100 text-red-800',
+  cancelled: 'bg-gray-100 text-gray-600',
 };
+
+export const DEFAULT_CURRENCY = 'USD';
+export const DEFAULT_TAX_RATE = 20; // 20%
+export const INVOICE_NUMBER_PREFIX = 'INV';
+export const MAX_PDF_SIZE_MB = 10;
