@@ -1,222 +1,285 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
 import { 
-  FileText, 
-  Edit, 
-  Trash2, 
-  Send, 
-  Download, 
-  Search, 
-  Filter,
-  ChevronDown,
-  ChevronUp,
-  Loader2,
-  Eye
-} from 'lucide-react';
-import type { Invoice, InvoiceListProps, InvoiceStatus } from '@/types';
-import { INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS } from '@/types';
+  Invoice, 
+  InvoiceListProps, 
+  InvoiceFilters, 
+  InvoiceSortOptions, 
+  InvoiceSortField, 
+  SortDirection,
+  InvoiceStatus 
+} from '@/types';
+import { InvoiceCard } from './InvoiceCard';
+import { Search, Filter, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 export function InvoiceList({ 
   invoices, 
   onEdit, 
   onDelete, 
   onSend, 
-  loading = false 
+  onStatusChange 
 }: InvoiceListProps) {
-  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<InvoiceStatus | 'all'>('all');
-  const [sortBy, setSortBy] = useState<'date' | 'amount' | 'number'>('date');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [filters, setFilters] = useState<InvoiceFilters>({});
+  const [sortOptions, setSortOptions] = useState<InvoiceSortOptions>({
+    field: 'issueDate',
+    direction: 'desc'
+  });
   const [showFilters, setShowFilters] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [sendingId, setSendingId] = useState<string | null>(null);
 
   const filteredAndSortedInvoices = useMemo(() => {
-    let filtered = [...invoices];
+    let result = [...invoices];
 
-    if (searchQuery) {
+    // Apply search query
+    if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        invoice =>
-          invoice.invoiceNumber.toLowerCase().includes(query) ||
-          invoice.client.name.toLowerCase().includes(query) ||
-          invoice.client.email.toLowerCase().includes(query)
+      result = result.filter(invoice => 
+        invoice.invoiceNumber.toLowerCase().includes(query) ||
+        invoice.clientName.toLowerCase().includes(query) ||
+        invoice.clientEmail.toLowerCase().includes(query)
       );
     }
 
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(invoice => invoice.status === statusFilter);
+    // Apply status filter
+    if (filters.status && filters.status.length > 0) {
+      result = result.filter(invoice => filters.status!.includes(invoice.status));
     }
 
-    filtered.sort((a, b) => {
-      let comparison = 0;
+    // Apply date range filter
+    if (filters.dateFrom) {
+      result = result.filter(invoice => invoice.issueDate >= filters.dateFrom!);
+    }
+    if (filters.dateTo) {
+      result = result.filter(invoice => invoice.issueDate <= filters.dateTo!);
+    }
 
-      switch (sortBy) {
-        case 'date':
-          comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-          break;
-        case 'amount':
-          comparison = a.total - b.total;
-          break;
-        case 'number':
-          comparison = a.invoiceNumber.localeCompare(b.invoiceNumber);
-          break;
+    // Apply amount range filter
+    if (filters.minAmount !== undefined) {
+      result = result.filter(invoice => invoice.total >= filters.minAmount!);
+    }
+    if (filters.maxAmount !== undefined) {
+      result = result.filter(invoice => invoice.total <= filters.maxAmount!);
+    }
+
+    // Apply sorting
+    result.sort((a, b) => {
+      let aValue: any = a[sortOptions.field];
+      let bValue: any = b[sortOptions.field];
+
+      // Handle date strings
+      if (sortOptions.field === 'issueDate' || sortOptions.field === 'dueDate') {
+        aValue = new Date(aValue).getTime();
+        bValue = new Date(bValue).getTime();
       }
 
-      return sortOrder === 'asc' ? comparison : -comparison;
+      // Handle numbers
+      if (sortOptions.field === 'total') {
+        aValue = Number(aValue);
+        bValue = Number(bValue);
+      }
+
+      // Handle strings
+      if (typeof aValue === 'string') {
+        aValue = aValue.toLowerCase();
+        bValue = bValue.toLowerCase();
+      }
+
+      if (aValue < bValue) return sortOptions.direction === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOptions.direction === 'asc' ? 1 : -1;
+      return 0;
     });
 
-    return filtered;
-  }, [invoices, searchQuery, statusFilter, sortBy, sortOrder]);
+    return result;
+  }, [invoices, searchQuery, filters, sortOptions]);
 
-  const handleSort = (field: 'date' | 'amount' | 'number') => {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(field);
-      setSortOrder('desc');
-    }
+  const handleSort = (field: InvoiceSortField) => {
+    setSortOptions(prev => ({
+      field,
+      direction: prev.field === field && prev.direction === 'asc' ? 'desc' : 'asc'
+    }));
   };
 
-  const handleDelete = async (invoiceId: string) => {
-    if (!onDelete) return;
-    
-    if (!confirm('Are you sure you want to delete this invoice?')) return;
-
-    setDeletingId(invoiceId);
-    try {
-      await onDelete(invoiceId);
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
-  const handleSend = async (invoiceId: string) => {
-    if (!onSend) return;
-
-    setSendingId(invoiceId);
-    try {
-      await onSend(invoiceId);
-    } finally {
-      setSendingId(null);
-    }
-  };
-
-  const handleView = (invoiceId: string) => {
-    router.push(`/invoices/${invoiceId}`);
-  };
-
-  const handleEditClick = (invoice: Invoice) => {
-    if (onEdit) {
-      onEdit(invoice);
-    } else {
-      router.push(`/invoices/${invoice.id}/edit`);
-    }
-  };
-
-  const formatCurrency = (amount: number, currency: string = 'USD') => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: currency,
-    }).format(amount);
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
+  const handleStatusFilterToggle = (status: InvoiceStatus) => {
+    setFilters(prev => {
+      const currentStatuses = prev.status || [];
+      const newStatuses = currentStatuses.includes(status)
+        ? currentStatuses.filter(s => s !== status)
+        : [...currentStatuses, status];
+      
+      return {
+        ...prev,
+        status: newStatuses.length > 0 ? newStatuses : undefined
+      };
     });
   };
 
-  const SortIcon = ({ field }: { field: 'date' | 'amount' | 'number' }) => {
-    if (sortBy !== field) return null;
-    return sortOrder === 'asc' ? (
-      <ChevronUp className="w-4 h-4" />
-    ) : (
-      <ChevronDown className="w-4 h-4" />
-    );
+  const clearFilters = () => {
+    setFilters({});
+    setSearchQuery('');
   };
 
-  if (loading) {
-    return (
-      <div className="bg-gray-900 rounded-lg p-12 text-center">
-        <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-blue-500" />
-        <p className="text-gray-400">Loading invoices...</p>
-      </div>
-    );
-  }
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (filters.status && filters.status.length > 0) count++;
+    if (filters.dateFrom) count++;
+    if (filters.dateTo) count++;
+    if (filters.minAmount !== undefined) count++;
+    if (filters.maxAmount !== undefined) count++;
+    if (searchQuery.trim()) count++;
+    return count;
+  }, [filters, searchQuery]);
+
+  const SortIcon = ({ field }: { field: InvoiceSortField }) => {
+    if (sortOptions.field !== field) {
+      return <ArrowUpDown className="w-4 h-4 text-gray-500" />;
+    }
+    return sortOptions.direction === 'asc' 
+      ? <ArrowUp className="w-4 h-4 text-blue-400" />
+      : <ArrowDown className="w-4 h-4 text-blue-400" />;
+  };
 
   return (
     <div className="space-y-4">
-      {/* Search and Filters */}
-      <div className="bg-gray-900 rounded-lg p-4 space-y-4">
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500" />
-            <input
-              type="text"
-              placeholder="Search by invoice number, client name, or email..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg flex items-center gap-2 transition-colors"
-          >
-            <Filter className="w-5 h-5" />
-            Filters
-            {showFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
+      {/* Search and Filter Bar */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex-1 relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search by invoice number, client name, or email..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
         </div>
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className="flex items-center gap-2 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white hover:bg-gray-750 transition-colors"
+        >
+          <Filter className="w-5 h-5" />
+          <span>Filters</span>
+          {activeFilterCount > 0 && (
+            <span className="px-2 py-0.5 bg-blue-600 text-white text-xs rounded-full">
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
+      </div>
 
-        {showFilters && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-gray-800">
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">Status</label>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as InvoiceStatus | 'all')}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-blue-500"
+      {/* Filter Panel */}
+      {showFilters && (
+        <div className="p-4 bg-gray-800 border border-gray-700 rounded-lg space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-white">Filters</h3>
+            {activeFilterCount > 0 && (
+              <button
+                onClick={clearFilters}
+                className="text-sm text-blue-400 hover:text-blue-300"
               >
-                <option value="all">All Statuses</option>
-                <option value="draft">Draft</option>
-                <option value="sent">Sent</option>
-                <option value="paid">Paid</option>
-                <option value="overdue">Overdue</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">Sort By</label>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as 'date' | 'amount' | 'number')}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="date">Date</option>
-                <option value="amount">Amount</option>
-                <option value="number">Invoice Number</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">Order</label>
-              <select
-                value={sortOrder}
-                onChange={(e) => setSortOrder(e.target.value as 'asc' | 'desc')}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="desc">Descending</option>
-                <option value="asc">Ascending</option>
-              </select>
+                Clear all
+              </button>
+            )}
+          </div>
+
+          {/* Status Filter */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Status</label>
+            <div className="flex flex-wrap gap-2">
+              {(['draft', 'sent', 'paid', 'overdue', 'cancelled'] as InvoiceStatus[]).map(status => (
+                <button
+                  key={status}
+                  onClick={() => handleStatusFilterToggle(status)}
+                  className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
+                    filters.status?.includes(status)
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  {status.charAt(0).toUpperCase() + status.slice(1)}
+                </button>
+              ))}
             </div>
           </div>
-        )}
+
+          {/* Date Range Filter */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">From Date</label>
+              <input
+                type="date"
+                value={filters.dateFrom || ''}
+                onChange={(e) => setFilters(prev => ({ ...prev, dateFrom: e.target.value || undefined }))}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">To Date</label>
+              <input
+                type="date"
+                value={filters.dateTo || ''}
+                onChange={(e) => setFilters(prev => ({ ...prev, dateTo: e.target.value || undefined }))}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Amount Range Filter */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Min Amount</label>
+              <input
+                type="number"
+                placeholder="0.00"
+                value={filters.minAmount || ''}
+                onChange={(e) => setFilters(prev => ({ 
+                  ...prev, 
+                  minAmount: e.target.value ? Number(e.target.value) : undefined 
+                }))}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Max Amount</label>
+              <input
+                type="number"
+                placeholder="0.00"
+                value={filters.maxAmount || ''}
+                onChange={(e) => setFilters(prev => ({ 
+                  ...prev, 
+                  maxAmount: e.target.value ? Number(e.target.value) : undefined 
+                }))}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sort Options */}
+      <div className="flex flex-wrap gap-2">
+        <span className="text-sm text-gray-400 py-2">Sort by:</span>
+        {[
+          { field: 'invoiceNumber' as InvoiceSortField, label: 'Invoice #' },
+          { field: 'clientName' as InvoiceSortField, label: 'Client' },
+          { field: 'issueDate' as InvoiceSortField, label: 'Issue Date' },
+          { field: 'dueDate' as InvoiceSortField, label: 'Due Date' },
+          { field: 'total' as InvoiceSortField, label: 'Amount' },
+          { field: 'status' as InvoiceSortField, label: 'Status' }
+        ].map(({ field, label }) => (
+          <button
+            key={field}
+            onClick={() => handleSort(field)}
+            className={`flex items-center gap-1 px-3 py-1 rounded-lg text-sm transition-colors ${
+              sortOptions.field === field
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+            }`}
+          >
+            <span>{label}</span>
+            <SortIcon field={field} />
+          </button>
+        ))}
       </div>
 
       {/* Results Count */}
@@ -226,145 +289,29 @@ export function InvoiceList({
 
       {/* Invoice List */}
       {filteredAndSortedInvoices.length === 0 ? (
-        <div className="bg-gray-900 rounded-lg p-12 text-center">
-          <FileText className="w-16 h-16 mx-auto mb-4 text-gray-600" />
-          <h3 className="text-xl font-semibold mb-2">No invoices found</h3>
-          <p className="text-gray-400">
-            {searchQuery || statusFilter !== 'all'
-              ? 'Try adjusting your filters'
-              : 'Create your first invoice to get started'}
-          </p>
+        <div className="text-center py-12 bg-gray-800 rounded-lg border border-gray-700">
+          <p className="text-gray-400 text-lg">No invoices found</p>
+          {activeFilterCount > 0 && (
+            <button
+              onClick={clearFilters}
+              className="mt-4 text-blue-400 hover:text-blue-300"
+            >
+              Clear filters to see all invoices
+            </button>
+          )}
         </div>
       ) : (
-        <div className="bg-gray-900 rounded-lg overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-800 border-b border-gray-700">
-                <tr>
-                  <th
-                    onClick={() => handleSort('number')}
-                    className="text-left p-4 text-sm font-semibold cursor-pointer hover:bg-gray-750 transition-colors"
-                  >
-                    <div className="flex items-center gap-2">
-                      Invoice #
-                      <SortIcon field="number" />
-                    </div>
-                  </th>
-                  <th className="text-left p-4 text-sm font-semibold">Client</th>
-                  <th
-                    onClick={() => handleSort('date')}
-                    className="text-left p-4 text-sm font-semibold cursor-pointer hover:bg-gray-750 transition-colors"
-                  >
-                    <div className="flex items-center gap-2">
-                      Date
-                      <SortIcon field="date" />
-                    </div>
-                  </th>
-                  <th className="text-left p-4 text-sm font-semibold">Due Date</th>
-                  <th
-                    onClick={() => handleSort('amount')}
-                    className="text-right p-4 text-sm font-semibold cursor-pointer hover:bg-gray-750 transition-colors"
-                  >
-                    <div className="flex items-center justify-end gap-2">
-                      Amount
-                      <SortIcon field="amount" />
-                    </div>
-                  </th>
-                  <th className="text-left p-4 text-sm font-semibold">Status</th>
-                  <th className="text-right p-4 text-sm font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAndSortedInvoices.map((invoice) => (
-                  <tr
-                    key={invoice.id}
-                    className="border-b border-gray-800 hover:bg-gray-800/50 transition-colors"
-                  >
-                    <td className="p-4">
-                      <div className="font-mono text-sm font-semibold text-blue-400">
-                        {invoice.invoiceNumber}
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <div className="font-medium">{invoice.client.name}</div>
-                      <div className="text-sm text-gray-400">{invoice.client.email}</div>
-                    </td>
-                    <td className="p-4 text-sm text-gray-300">
-                      {formatDate(invoice.issueDate)}
-                    </td>
-                    <td className="p-4 text-sm text-gray-300">
-                      {formatDate(invoice.dueDate)}
-                    </td>
-                    <td className="p-4 text-right font-semibold">
-                      {formatCurrency(invoice.total, invoice.currency)}
-                    </td>
-                    <td className="p-4">
-                      <span
-                        className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
-                          INVOICE_STATUS_COLORS[invoice.status]
-                        }`}
-                      >
-                        {INVOICE_STATUS_LABELS[invoice.status]}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => handleView(invoice.id)}
-                          className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
-                          title="View"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleEditClick(invoice)}
-                          className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
-                          title="Edit"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
-                        {onSend && invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
-                          <button
-                            onClick={() => handleSend(invoice.id)}
-                            disabled={sendingId === invoice.id}
-                            className="p-2 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Send"
-                          >
-                            {sendingId === invoice.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Send className="w-4 h-4" />
-                            )}
-                          </button>
-                        )}
-                        <button
-                          onClick={() => window.open(`/api/invoices/${invoice.id}/pdf`, '_blank')}
-                          className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
-                          title="Download PDF"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                        {onDelete && (
-                          <button
-                            onClick={() => handleDelete(invoice.id)}
-                            disabled={deletingId === invoice.id}
-                            className="p-2 hover:bg-red-900/50 text-red-400 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Delete"
-                          >
-                            {deletingId === invoice.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-4 h-4" />
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filteredAndSortedInvoices.map(invoice => (
+            <InvoiceCard
+              key={invoice.id}
+              invoice={invoice}
+              onEdit={() => onEdit(invoice)}
+              onDelete={() => onDelete(invoice.id)}
+              onSend={() => onSend(invoice)}
+              onStatusChange={(status) => onStatusChange(invoice.id, status)}
+            />
+          ))}
         </div>
       )}
     </div>

@@ -1,122 +1,63 @@
-import type { InvoiceItem } from '@/types';
+import type { CalculateInvoiceTotals, CalculateItemTotal, InvoiceCalculations } from '@/types';
 
-export function calculateSubtotal(items: InvoiceItem[]): number {
-  if (!items || items.length === 0) return 0;
+/**
+ * Calculate item total based on quantity and unit price
+ * @param quantity - Number of items
+ * @param unitPrice - Price per unit
+ * @returns Total price for the item
+ */
+export const calculateItemTotal: CalculateItemTotal = (quantity: number, unitPrice: number): number => {
+  if (quantity < 0 || unitPrice < 0) {
+    return 0;
+  }
   
-  return items.reduce((sum, item) => {
-    const itemSubtotal = item.quantity * item.unitPrice;
-    return sum + itemSubtotal;
-  }, 0);
-}
+  const total = quantity * unitPrice;
+  return Math.round(total * 100) / 100; // Round to 2 decimal places
+};
 
-export function calculateTax(items: InvoiceItem[]): number {
-  if (!items || items.length === 0) return 0;
-  
-  return items.reduce((sum, item) => {
-    const itemSubtotal = item.quantity * item.unitPrice;
-    const itemTax = itemSubtotal * (item.taxRate / 100);
-    return sum + itemTax;
-  }, 0);
-}
-
-export function calculateTotal(
-  subtotal: number,
-  taxAmount: number,
-  discountAmount: number
-): number {
-  const total = subtotal + taxAmount - discountAmount;
-  return Math.max(0, total);
-}
-
-export function calculateDiscount(
-  subtotal: number,
-  discountPercent: number
-): number {
-  if (discountPercent <= 0) return 0;
-  if (discountPercent >= 100) return subtotal;
-  
-  return subtotal * (discountPercent / 100);
-}
-
-export function calculateItemTotal(
-  quantity: number,
-  unitPrice: number,
+/**
+ * Calculate invoice totals including subtotal, tax amount, and final total
+ * @param items - Array of invoice items with quantity and unitPrice
+ * @param taxRate - Tax rate as percentage (e.g., 20 for 20%)
+ * @returns Object containing subtotal, taxAmount, and total
+ */
+export const calculateInvoiceTotals: CalculateInvoiceTotals = (
+  items: Array<{ quantity: number; unitPrice: number }>,
   taxRate: number
-): number {
-  const subtotal = quantity * unitPrice;
-  const tax = subtotal * (taxRate / 100);
-  return subtotal + tax;
-}
-
-export function calculateInvoiceTotals(
-  items: InvoiceItem[],
-  discountAmount: number = 0,
-  discountPercent: number = 0
-): {
-  subtotal: number;
-  taxAmount: number;
-  discountAmount: number;
-  total: number;
-} {
-  const subtotal = calculateSubtotal(items);
-  const taxAmount = calculateTax(items);
-  
-  let finalDiscountAmount = discountAmount;
-  if (discountPercent > 0) {
-    finalDiscountAmount = calculateDiscount(subtotal, discountPercent);
+): InvoiceCalculations => {
+  // Validate inputs
+  if (!Array.isArray(items) || items.length === 0) {
+    return {
+      subtotal: 0,
+      taxAmount: 0,
+      total: 0,
+    };
   }
-  
-  const total = calculateTotal(subtotal, taxAmount, finalDiscountAmount);
-  
+
+  if (taxRate < 0) {
+    taxRate = 0;
+  }
+
+  // Calculate subtotal by summing all item totals
+  const subtotal = items.reduce((sum, item) => {
+    const itemTotal = calculateItemTotal(item.quantity, item.unitPrice);
+    return sum + itemTotal;
+  }, 0);
+
+  // Round subtotal to 2 decimal places
+  const roundedSubtotal = Math.round(subtotal * 100) / 100;
+
+  // Calculate tax amount
+  const taxAmount = (roundedSubtotal * taxRate) / 100;
+  const roundedTaxAmount = Math.round(taxAmount * 100) / 100;
+
+  // Calculate final total
+  const total = roundedSubtotal + roundedTaxAmount;
+  const roundedTotal = Math.round(total * 100) / 100;
+
   return {
-    subtotal: Math.round(subtotal * 100) / 100,
-    taxAmount: Math.round(taxAmount * 100) / 100,
-    discountAmount: Math.round(finalDiscountAmount * 100) / 100,
-    total: Math.round(total * 100) / 100,
+    subtotal: roundedSubtotal,
+    taxAmount: roundedTaxAmount,
+    total: roundedTotal,
   };
-}
-
-export function formatCurrency(amount: number, currency: string = 'USD'): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
-}
-
-export function validateInvoiceItem(item: Partial<InvoiceItem>): {
-  isValid: boolean;
-  errors: string[];
-} {
-  const errors: string[] = [];
-  
-  if (!item.description || item.description.trim().length === 0) {
-    errors.push('Description is required');
-  }
-  
-  if (typeof item.quantity !== 'number' || item.quantity <= 0) {
-    errors.push('Quantity must be greater than 0');
-  }
-  
-  if (typeof item.unitPrice !== 'number' || item.unitPrice < 0) {
-    errors.push('Unit price must be 0 or greater');
-  }
-  
-  if (typeof item.taxRate !== 'number' || item.taxRate < 0 || item.taxRate > 100) {
-    errors.push('Tax rate must be between 0 and 100');
-  }
-  
-  return {
-    isValid: errors.length === 0,
-    errors,
-  };
-}
-
-export function recalculateInvoiceItem(
-  quantity: number,
-  unitPrice: number,
-  taxRate: number
-): InvoiceItem['total'] {
-  return calculateItemTotal(quantity, unitPrice, taxRate);
-}
+};

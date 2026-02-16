@@ -1,184 +1,115 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { StorageService } from '@/lib/storage';
-import { calculateSubtotal, calculateTax, calculateTotal, calculateDiscount } from '@/lib/calculations';
-import {
+import { storageService } from '@/lib/storage';
+import { calculateInvoiceTotals } from '@/lib/calculations';
+import { validateInvoiceData } from '@/lib/validation';
+import type {
+  GetInvoicesResponse,
   CreateInvoiceRequest,
   CreateInvoiceResponse,
-  GetInvoicesResponse,
   Invoice,
-  InvoiceItem,
-  InvoiceStatus,
 } from '@/types';
 
-const storage = new StorageService();
-
-function generateInvoiceNumber(): string {
-  const year = new Date().getFullYear();
-  const invoices = storage.getInvoices();
-  const yearInvoices = invoices.filter(inv => 
-    inv.invoiceNumber.startsWith(`INV-${year}`)
-  );
-  const nextNumber = yearInvoices.length + 1;
-  return `INV-${year}-${String(nextNumber).padStart(3, '0')}`;
-}
-
-function calculateItemTotal(quantity: number, unitPrice: number, taxRate: number): number {
-  return quantity * unitPrice * (1 + taxRate / 100);
-}
-
-export async function GET(request: NextRequest): Promise<NextResponse<GetInvoicesResponse>> {
+export async function GET(_request : NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const status = searchParams.get('status') as InvoiceStatus | null;
-    const clientId = searchParams.get('clientId');
-    const search = searchParams.get('search');
+    const invoices = storageService.getInvoices();
 
-    let invoices = storage.getInvoices();
-
-    // Apply filters
-    if (status) {
-      invoices = invoices.filter(inv => inv.status === status);
-    }
-
-    if (clientId) {
-      invoices = invoices.filter(inv => inv.clientId === clientId);
-    }
-
-    if (search) {
-      const searchLower = search.toLowerCase();
-      invoices = invoices.filter(inv => 
-        inv.invoiceNumber.toLowerCase().includes(searchLower) ||
-        inv.client.name.toLowerCase().includes(searchLower) ||
-        inv.client.email.toLowerCase().includes(searchLower)
-      );
-    }
-
-    // Sort by creation date (newest first)
-    invoices.sort((a, b) => 
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-
-    return NextResponse.json({
+    const response: GetInvoicesResponse = {
       success: true,
       invoices,
-      total: invoices.length,
-    });
+      count: invoices.length,
+    };
+
+    return NextResponse.json(response, { status: 200 });
   } catch (error) {
     console.error('Error fetching invoices:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        invoices: [],
-        total: 0,
-        error: error instanceof Error ? error.message : 'Failed to fetch invoices',
-      },
-      { status: 500 }
-    );
+    const response: GetInvoicesResponse = {
+      success: false,
+      invoices: [],
+      count: 0,
+      error: 'Failed to fetch invoices',
+    };
+    return NextResponse.json(response, { status: 500 });
   }
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse<CreateInvoiceResponse>> {
+export async function POST(request: NextRequest) {
   try {
     const body: CreateInvoiceRequest = await request.json();
 
-    // Validate required fields
-    if (!body.clientId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Client ID is required',
-        },
-        { status: 400 }
-      );
+    // Validate invoice data
+    const validation = validateInvoiceData({
+      invoiceNumber: body.invoiceNumber,
+      clientName: body.clientName,
+      clientEmail: body.clientEmail,
+      clientAddress: body.clientAddress || '',
+      issueDate: body.issueDate,
+      dueDate: body.dueDate,
+      items: body.items.map((item, index) => ({
+        id: `item-${Date.now()}-${index}`,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      })),
+      taxRate: body.taxRate,
+      notes: body.notes || '',
+    });
+
+    if (!validation.isValid) {
+      const response: CreateInvoiceResponse = {
+        success: false,
+        message: 'Validation failed',
+        errors: validation.errors,
+      };
+      return NextResponse.json(response, { status: 400 });
     }
 
-    if (!body.items || body.items.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'At least one item is required',
-        },
-        { status: 400 }
-      );
-    }
+    // Calculate totals
+    const calculations = calculateInvoiceTotals(body.items, body.taxRate);
 
-    if (!body.issueDate || !body.dueDate) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Issue date and due date are required',
-        },
-        { status: 400 }
-      );
-    }
-
-    // Get client
-    const client = storage.getClient(body.clientId);
-    if (!client) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Client not found',
-        },
-        { status: 404 }
-      );
-    }
-
-    // Create invoice items with calculated totals
-    const items: InvoiceItem[] = body.items.map((item, index) => ({
+    // Prepare invoice items with IDs and totals
+    const invoiceItems = body.items.map((item, index) => ({
       id: `item-${Date.now()}-${index}`,
       description: item.description,
       quantity: item.quantity,
       unitPrice: item.unitPrice,
-      taxRate: item.taxRate,
-      total: calculateItemTotal(item.quantity, item.unitPrice, item.taxRate),
+      total: item.quantity * item.unitPrice,
     }));
 
-    // Calculate totals
-    const subtotal = calculateSubtotal(items);
-    const taxAmount = calculateTax(items);
-    const discountAmount = body.discountPercent 
-      ? calculateDiscount(subtotal, body.discountPercent)
-      : (body.discountAmount || 0);
-    const total = calculateTotal(subtotal, taxAmount, discountAmount);
-
-    // Create invoice
-    const now = new Date().toISOString();
-    const invoice: Invoice = {
-      id: `inv-${Date.now()}`,
-      invoiceNumber: generateInvoiceNumber(),
-      clientId: body.clientId,
-      client,
-      items,
-      subtotal,
-      taxAmount,
-      discountAmount,
-      discountPercent: body.discountPercent || 0,
-      total,
-      currency: body.currency || 'USD',
-      status: body.status || 'draft',
+    // Create invoice object
+    const invoiceData: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'> = {
+      invoiceNumber: body.invoiceNumber,
+      clientName: body.clientName,
+      clientEmail: body.clientEmail,
+      clientAddress: body.clientAddress,
       issueDate: body.issueDate,
       dueDate: body.dueDate,
+      items: invoiceItems,
+      subtotal: calculations.subtotal,
+      taxRate: body.taxRate,
+      taxAmount: calculations.taxAmount,
+      total: calculations.total,
+      status: 'draft',
       notes: body.notes,
-      createdAt: now,
-      updatedAt: now,
+      pdfFileName: body.pdfFileName,
     };
 
-    // Save invoice
-    storage.saveInvoice(invoice);
+    // Save to storage
+    const createdInvoice = storageService.createInvoice(invoiceData);
 
-    return NextResponse.json({
+    const response: CreateInvoiceResponse = {
       success: true,
-      invoice,
-    });
+      invoice: createdInvoice,
+      message: 'Invoice created successfully',
+    };
+
+    return NextResponse.json(response, { status: 201 });
   } catch (error) {
     console.error('Error creating invoice:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to create invoice',
-      },
-      { status: 500 }
-    );
+    const response: CreateInvoiceResponse = {
+      success: false,
+      message: 'Failed to create invoice',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+    return NextResponse.json(response, { status: 500 });
   }
 }

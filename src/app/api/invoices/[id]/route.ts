@@ -1,197 +1,230 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { StorageService } from '@/lib/storage';
-import { calculateSubtotal, calculateTax, calculateTotal, calculateDiscount } from '@/lib/calculations';
-import {
+import { storageService } from '@/lib/storage';
+import { calculateInvoiceTotals } from '@/lib/calculations';
+import { validateInvoiceData } from '@/lib/validation';
+import type {
   UpdateInvoiceRequest,
   UpdateInvoiceResponse,
-  GetInvoiceResponse,
   DeleteInvoiceResponse,
+  GetInvoiceResponse,
   Invoice,
-  InvoiceItem,
 } from '@/types';
 
-const storage = new StorageService();
-
-function calculateItemTotal(quantity: number, unitPrice: number, taxRate: number): number {
-  return quantity * unitPrice * (1 + taxRate / 100);
+interface RouteContext {
+  params: {
+    id: string;
+  };
 }
 
 export async function GET(_request : NextRequest,
-  { params }: { params: { id: string } }
-): Promise<NextResponse<GetInvoiceResponse>> {
+  context: RouteContext
+) {
   try {
-    const { id } = params;
+    const { id } = context.params;
 
-    const invoice = storage.getInvoice(id);
+    const invoice = storageService.getInvoice(id);
 
     if (!invoice) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Invoice not found',
-        },
-        { status: 404 }
-      );
+      const response: GetInvoiceResponse = {
+        success: false,
+        message: 'Invoice not found',
+      };
+      return NextResponse.json(response, { status: 404 });
     }
 
-    return NextResponse.json({
+    const response: GetInvoiceResponse = {
       success: true,
       invoice,
-    });
+    };
+
+    return NextResponse.json(response, { status: 200 });
   } catch (error) {
     console.error('Error fetching invoice:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch invoice',
-      },
-      { status: 500 }
-    );
+    const response: GetInvoiceResponse = {
+      success: false,
+      message: 'Failed to fetch invoice',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+    return NextResponse.json(response, { status: 500 });
   }
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
-): Promise<NextResponse<UpdateInvoiceResponse>> {
+  context: RouteContext
+) {
   try {
-    const { id } = params;
+    const { id } = context.params;
     const body: UpdateInvoiceRequest = await request.json();
 
-    const existingInvoice = storage.getInvoice(id);
-
+    // Check if invoice exists
+    const existingInvoice = storageService.getInvoice(id);
     if (!existingInvoice) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Invoice not found',
-        },
-        { status: 404 }
-      );
+      const response: UpdateInvoiceResponse = {
+        success: false,
+        message: 'Invoice not found',
+      };
+      return NextResponse.json(response, { status: 404 });
     }
 
-    // If clientId is being updated, validate the new client exists
-    let client = existingInvoice.client;
-    if (body.clientId && body.clientId !== existingInvoice.clientId) {
-      const newClient = storage.getClient(body.clientId);
-      if (!newClient) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Client not found',
-          },
-          { status: 404 }
-        );
-      }
-      client = newClient;
+    // Prepare update data
+    const updateData: Partial<Invoice> = {};
+
+    if (body.invoiceNumber !== undefined) {
+      updateData.invoiceNumber = body.invoiceNumber;
+    }
+    if (body.clientName !== undefined) {
+      updateData.clientName = body.clientName;
+    }
+    if (body.clientEmail !== undefined) {
+      updateData.clientEmail = body.clientEmail;
+    }
+    if (body.clientAddress !== undefined) {
+      updateData.clientAddress = body.clientAddress;
+    }
+    if (body.issueDate !== undefined) {
+      updateData.issueDate = body.issueDate;
+    }
+    if (body.dueDate !== undefined) {
+      updateData.dueDate = body.dueDate;
+    }
+    if (body.status !== undefined) {
+      updateData.status = body.status;
+    }
+    if (body.notes !== undefined) {
+      updateData.notes = body.notes;
+    }
+    if (body.taxRate !== undefined) {
+      updateData.taxRate = body.taxRate;
     }
 
-    // Calculate new items if provided
-    let items = existingInvoice.items;
-    let subtotal = existingInvoice.subtotal;
-    let taxAmount = existingInvoice.taxAmount;
-    let discountAmount = existingInvoice.discountAmount;
-    let discountPercent = existingInvoice.discountPercent;
-    let total = existingInvoice.total;
-
-    if (body.items) {
-      items = body.items.map((item, index) => ({
+    // If items are being updated, recalculate totals
+    if (body.items !== undefined) {
+      const invoiceItems = body.items.map((item, index) => ({
         id: `item-${Date.now()}-${index}`,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
-        taxRate: item.taxRate,
-        total: calculateItemTotal(item.quantity, item.unitPrice, item.taxRate),
+        total: item.quantity * item.unitPrice,
       }));
 
-      subtotal = calculateSubtotal(items);
-      taxAmount = calculateTax(items);
+      const taxRate = body.taxRate !== undefined ? body.taxRate : existingInvoice.taxRate;
+      const calculations = calculateInvoiceTotals(body.items, taxRate);
+
+      updateData.items = invoiceItems;
+      updateData.subtotal = calculations.subtotal;
+      updateData.taxAmount = calculations.taxAmount;
+      updateData.total = calculations.total;
+    } else if (body.taxRate !== undefined) {
+      // Recalculate if only tax rate changed
+      const calculations = calculateInvoiceTotals(
+        existingInvoice.items.map(item => ({
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+        })),
+        body.taxRate
+      );
+
+      updateData.taxAmount = calculations.taxAmount;
+      updateData.total = calculations.total;
     }
 
-    // Recalculate discount if changed
-    if (body.discountPercent !== undefined) {
-      discountPercent = body.discountPercent;
-      discountAmount = calculateDiscount(subtotal, discountPercent);
-    } else if (body.discountAmount !== undefined) {
-      discountAmount = body.discountAmount;
-      discountPercent = 0;
-    }
+    // Validate if we have enough data to validate
+    if (
+      body.invoiceNumber ||
+      body.clientName ||
+      body.clientEmail ||
+      body.items
+    ) {
+      const dataToValidate = {
+        invoiceNumber: body.invoiceNumber || existingInvoice.invoiceNumber,
+        clientName: body.clientName || existingInvoice.clientName,
+        clientEmail: body.clientEmail || existingInvoice.clientEmail,
+        clientAddress: body.clientAddress !== undefined ? body.clientAddress : existingInvoice.clientAddress || '',
+        issueDate: body.issueDate || existingInvoice.issueDate,
+        dueDate: body.dueDate || existingInvoice.dueDate,
+        items: body.items
+          ? body.items.map((item, index) => ({
+              id: `item-${Date.now()}-${index}`,
+              description: item.description,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+            }))
+          : existingInvoice.items,
+        taxRate: body.taxRate !== undefined ? body.taxRate : existingInvoice.taxRate,
+        notes: body.notes !== undefined ? body.notes : existingInvoice.notes || '',
+      };
 
-    // Recalculate total
-    total = calculateTotal(subtotal, taxAmount, discountAmount);
+      const validation = validateInvoiceData(dataToValidate);
+
+      if (!validation.isValid) {
+        const response: UpdateInvoiceResponse = {
+          success: false,
+          message: 'Validation failed',
+          errors: validation.errors,
+        };
+        return NextResponse.json(response, { status: 400 });
+      }
+    }
 
     // Update invoice
-    const updatedInvoice: Invoice = {
-      ...existingInvoice,
-      clientId: body.clientId || existingInvoice.clientId,
-      client,
-      items,
-      subtotal,
-      taxAmount,
-      discountAmount,
-      discountPercent,
-      total,
-      issueDate: body.issueDate || existingInvoice.issueDate,
-      dueDate: body.dueDate || existingInvoice.dueDate,
-      notes: body.notes !== undefined ? body.notes : existingInvoice.notes,
-      status: body.status || existingInvoice.status,
-      updatedAt: new Date().toISOString(),
-    };
+    const updatedInvoice = storageService.updateInvoice(id, updateData);
 
-    // Handle status changes
-    if (body.status === 'paid' && !existingInvoice.paidAt) {
-      updatedInvoice.paidAt = new Date().toISOString();
+    if (!updatedInvoice) {
+      const response: UpdateInvoiceResponse = {
+        success: false,
+        message: 'Failed to update invoice',
+      };
+      return NextResponse.json(response, { status: 500 });
     }
 
-    storage.updateInvoice(id, updatedInvoice);
-
-    return NextResponse.json({
+    const response: UpdateInvoiceResponse = {
       success: true,
       invoice: updatedInvoice,
-    });
+      message: 'Invoice updated successfully',
+    };
+
+    return NextResponse.json(response, { status: 200 });
   } catch (error) {
     console.error('Error updating invoice:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update invoice',
-      },
-      { status: 500 }
-    );
+    const response: UpdateInvoiceResponse = {
+      success: false,
+      message: 'Failed to update invoice',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+    return NextResponse.json(response, { status: 500 });
   }
 }
 
 export async function DELETE(_request : NextRequest,
-  { params }: { params: { id: string } }
-): Promise<NextResponse<DeleteInvoiceResponse>> {
+  context: RouteContext
+) {
   try {
-    const { id } = params;
+    const { id } = context.params;
 
-    const existingInvoice = storage.getInvoice(id);
+    const deleted = storageService.deleteInvoice(id);
 
-    if (!existingInvoice) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Invoice not found',
-        },
-        { status: 404 }
-      );
+    if (!deleted) {
+      const response: DeleteInvoiceResponse = {
+        success: false,
+        message: 'Invoice not found',
+      };
+      return NextResponse.json(response, { status: 404 });
     }
 
-    storage.deleteInvoice(id);
-
-    return NextResponse.json({
+    const response: DeleteInvoiceResponse = {
       success: true,
-    });
+      message: 'Invoice deleted successfully',
+    };
+
+    return NextResponse.json(response, { status: 200 });
   } catch (error) {
     console.error('Error deleting invoice:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to delete invoice',
-      },
-      { status: 500 }
-    );
+    const response: DeleteInvoiceResponse = {
+      success: false,
+      message: 'Failed to delete invoice',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+    return NextResponse.json(response, { status: 500 });
   }
 }
